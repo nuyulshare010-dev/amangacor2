@@ -17,6 +17,14 @@ class LayarKacaProvider : MainAPI() {
     override var lang = "id"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
+    // Header khusus berdasarkan analisis CURL kamu (Linux User Agent)
+    private val turboHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+        "Sec-Fetch-Dest" to "iframe",
+        "Sec-Fetch-Site" to "cross-site",
+        "Upgrade-Insecure-Requests" to "1"
+    )
+
     // --- MAIN PAGE ---
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val document = app.get(mainUrl).document
@@ -40,11 +48,12 @@ class LayarKacaProvider : MainAPI() {
     data class Lk21SearchItem(val title: String, val slug: String, val poster: String?, val type: String?, val year: Int?, val quality: String?)
 
     override suspend fun search(query: String): List<SearchResponse> {
+        // Menggunakan mirror search API (gudangvape) seperti kode asli karena seringkali search utama diproteksi
         val searchUrl = "https://gudangvape.com/search.php?s=$query&page=1"
         val headers = mapOf(
             "Origin" to mainUrl,
             "Referer" to "$mainUrl/",
-            "User-Agent" to "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36"
+            "User-Agent" to turboHeaders["User-Agent"]!!
         )
 
         try {
@@ -107,6 +116,7 @@ class LayarKacaProvider : MainAPI() {
         var response = app.get(cleanUrl)
         var document = response.document
 
+        // Handle Landing Page Redirect
         val redirectButton = document.select("a:contains(Buka Sekarang), a.btn:contains(Nontondrama)").first()
         if (redirectButton != null) {
             val newUrl = redirectButton.attr("href")
@@ -163,81 +173,94 @@ class LayarKacaProvider : MainAPI() {
         }
     }
 
-    // --- LOAD LINKS (DENGAN CADANGAN MANUAL) ---
+    // --- LOAD LINKS (REVISED FOR TURBOVID/PLAYERIFRAME) ---
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        var currentUrl = data
-        var document = app.get(currentUrl).document
+        // Data adalah URL halaman film/episode saat ini
+        val document = app.get(data).document
 
-        // 1. Handle Redirect Button (NontonDrama / Buka Sekarang)
-        val redirectButton = document.select("a:contains(Buka Sekarang), a.btn:contains(Nontondrama)").first()
-        if (redirectButton != null && redirectButton.attr("href").isNotEmpty()) {
-            currentUrl = fixUrl(redirectButton.attr("href"))
-            document = app.get(currentUrl).document
+        // 1. Ambil URL iframe utama. Selector diperbaiki untuk menangkap berbagai kemungkinan
+        val rawIframeUrl = document.select("iframe#main-player").attr("src")
+        var mainIframeUrl = fixUrl(rawIframeUrl)
+
+        // Fallback: Jika iframe utama kosong, cek list player (biasanya ada Server 1, Server 2)
+        if (mainIframeUrl.isEmpty()) {
+            mainIframeUrl = document.select("ul#player-list li a").firstOrNull()?.attr("data-url")?.let { fixUrl(it) } ?: ""
         }
 
-        val playerLinks = document.select("ul#player-list li a").map { it.attr("data-url").ifEmpty { it.attr("href") } }
-        val mainIframe = document.select("iframe#main-player").attr("src")
-        val allSources = (playerLinks + mainIframe).filter { it.isNotBlank() }.map { fixUrl(it) }.distinct()
-
-        allSources.forEach { url ->
-            // COBA 1: Pakai Extractor Resmi (Extractor.kt)
-            // Timeout sedikit dinaikkan supaya tidak gampang error
-            val directLoaded = try {
-                loadExtractor(url, currentUrl, subtitleCallback, callback)
-            } catch (e: Exception) {
-                false
-            }
-            
-            // COBA 2: Jika Extractor gagal, pakai cara MANUAL (Unwrap)
-            // Ini yang tadi saya hapus, sekarang kita kembalikan sebagai "ban serep"
-            if (!directLoaded) {
-                try {
-                    val response = app.get(url, referer = currentUrl)
-                    val wrapperUrl = response.url
-                    val iframePage = response.document
-
-                    // Cari iframe lagi di dalam (Nested Iframes)
-                    iframePage.select("iframe").forEach { 
-                         // Coba load lagi dengan extractor
-                        loadExtractor(fixUrl(it.attr("src")), wrapperUrl, subtitleCallback, callback) 
-                    }
-                    
-                    // Regex Sakti (Brute Force link video)
-                    // Mencari apapun yang berakhiran .m3u8 atau .mp4 di dalam kode HTML
-                    val scriptHtml = iframePage.html().replace("\\/", "/")
-                    Regex("(?i)https?://[^\"]+\\.(m3u8|mp4)(?:\\?[^\"']*)?").findAll(scriptHtml).forEach { match ->
-                        val streamUrl = match.value
-                        val isM3u8 = streamUrl.contains("m3u8", ignoreCase = true)
-                        
-                        // Header palsu biar server ngira kita browser beneran
-                        val originUrl = try { URI(wrapperUrl).let { "${it.scheme}://${it.host}" } } catch(e:Exception) { "https://playeriframe.sbs" }
-                        val headers = mapOf(
-                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                            "Referer" to wrapperUrl,
-                            "Origin" to originUrl
-                        )
-
-                        callback.invoke(
-                            newExtractorLink(
-                                source = "LK21 VIP (Cadangan)", // Saya namain beda biar ketahuan kalau ini hasil regex
-                                name = "LK21 VIP (Cadangan)",
-                                url = streamUrl,
-                                type = if (isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                            ) {
-                                this.referer = wrapperUrl
-                                this.quality = Qualities.Unknown.value
-                                this.headers = headers
-                            }
-                        )
-                    }
-                } catch (e: Exception) {}
+        if (mainIframeUrl.isNotBlank()) {
+            // Logika Deteksi Server
+            if (mainIframeUrl.contains("playeriframe.sbs") || mainIframeUrl.contains("turbovid") || mainIframeUrl.contains("emturbovid")) {
+                // Gunakan ekstraktor khusus untuk TurboVid/PlayerIframe
+                extractTurboVid(mainIframeUrl, data, callback)
+            } else {
+                // Gunakan ekstraktor bawaan Cloudstream untuk server lain (misal fembed, hydrax, dll)
+                loadExtractor(mainIframeUrl, data, subtitleCallback, callback)
             }
         }
+
         return true
+    }
+
+    // --- CUSTOM EXTRACTOR FOR TURBOVID / PLAYERIFRAME ---
+    private suspend fun extractTurboVid(url: String, referer: String, callback: (ExtractorLink) -> Unit) {
+        try {
+            // Langkah 1: Request ke Wrapper (playeriframe.sbs)
+            // Penting: Referer harus URL halaman LK21 asli
+            val wrapperHeaders = turboHeaders.toMutableMap()
+            wrapperHeaders["Referer"] = referer
+
+            val responseWrapper = app.get(url, headers = wrapperHeaders)
+            var targetUrl = responseWrapper.url // URL setelah redirect (misal: turbovidhls.com)
+            var pageContent = responseWrapper.text
+
+            // Jika masih di wrapper (belum redirect), cari iframe di dalamnya
+            val soup = responseWrapper.document
+            val innerIframe = soup.select("iframe").attr("src")
+            if (innerIframe.isNotEmpty() && !targetUrl.contains("turbovid") && !targetUrl.contains("emturbovid")) {
+                targetUrl = fixUrl(innerIframe)
+                // Request lagi ke inner iframe (turbovidhls)
+                pageContent = app.get(targetUrl, headers = mapOf("Referer" to "https://playeriframe.sbs/")).text
+            }
+
+            // Langkah 2: Parsing halaman akhir (TurboVid) untuk mencari config JWPlayer / file .m3u8
+            // Regex ini mencari pola: file: "..." atau source: "..." yang berisi .m3u8
+            val m3u8Regex = Regex("(?i)(?:file|source)\\s*:\\s*[\"']([^\"']+\\.m3u8[^\"']*)[\"']")
+            val match = m3u8Regex.find(pageContent)
+
+            if (match != null) {
+                val m3u8Url = match.groupValues[1]
+
+                // Langkah 3: Setup Header untuk Video Player
+                // 'Origin' harus sesuai dengan host tempat file ditemukan (misal turbovidhls.com)
+                val host = try { URI(targetUrl).host } catch (e: Exception) { "" }
+                val origin = if (host.isNotEmpty()) "https://$host" else "https://turbovidhls.com"
+
+                val videoHeaders = mapOf(
+                    "Origin" to origin,
+                    "Referer" to targetUrl,
+                    "User-Agent" to turboHeaders["User-Agent"]!!,
+                    "Accept" to "*/*"
+                )
+
+                callback.invoke(
+                    ExtractorLink(
+                        source = "LK21 VIP",
+                        name = "LK21 VIP (Turbo)",
+                        url = m3u8Url,
+                        referer = targetUrl,
+                        quality = Qualities.Unknown.value,
+                        type = ExtractorLinkType.M3U8,
+                        headers = videoHeaders
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }
