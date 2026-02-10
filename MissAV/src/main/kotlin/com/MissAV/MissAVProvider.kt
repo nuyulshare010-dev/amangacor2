@@ -86,7 +86,7 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // --- LOGIKA SUBTITLE GROUPING (Sudah Fix, Jangan Diubah) ---
+    // --- LOGIKA SUBTITLE (Sudah Fix) ---
     private suspend fun fetchSubtitleCat(code: String, subtitleCallback: (SubtitleFile) -> Unit) {
         try {
             val searchUrl = "https://www.subtitlecat.com/index.php?search=$code"
@@ -94,7 +94,6 @@ class MissAVProvider : MainAPI() {
             
             val searchResults = searchDoc.select("table.sub-table tbody tr td:nth-child(1) > a")
             
-            // Ambil 10 varian agar user punya banyak pilihan cadangan
             searchResults.take(10).forEach { linkElement ->
                 var detailPath = linkElement.attr("href")
                 if (!detailPath.startsWith("http")) {
@@ -106,10 +105,7 @@ class MissAVProvider : MainAPI() {
                     val detailDoc = app.get(detailPath).document
                     
                     detailDoc.select("div.sub-single").forEach { item ->
-                        // RAHASIA GROUPING: Nama bahasa harus sama persis (misal: "Indonesian").
-                        // Cloudstream otomatis bikin angka 1, 2, 3 di UI.
                         val rawLang = item.select("span").getOrNull(1)?.text()?.trim() ?: "Unknown"
-                        
                         val downloadEl = item.selectFirst("a.green-link")
                         val downloadHref = downloadEl?.attr("href")
 
@@ -129,7 +125,6 @@ class MissAVProvider : MainAPI() {
                         }
                     }
                 } catch (e: Exception) {
-                    // Skip error
                 }
             }
         } catch (e: Exception) {
@@ -151,34 +146,38 @@ class MissAVProvider : MainAPI() {
         val m3u8Regex = Regex("""(https?:\\?\/\\?\/[^"']+\.m3u8)""")
         val matches = m3u8Regex.findAll(text)
         
-        // Deduping URL supaya tidak ada link kembar
         val uniqueUrls = matches.map { 
             it.groupValues[1].replace("\\/", "/") 
         }.toSet()
 
+        // --- FILTER NAMA ---
+        // Variabel ini untuk mencatat nama sumber yang sudah ditambahkan.
+        // Agar tidak ada nama kembar.
+        val addedNames = mutableListOf<String>()
+
         if (uniqueUrls.isNotEmpty()) {
             uniqueUrls.forEach { fixedUrl ->
                 
-                // --- KUNCI UTAMA PERBAIKAN SUMBER ---
-                // Kita set Quality ke Unknown.
-                // Ini mencegah Cloudstream membuat entri terpisah (Surrit 1080p, Surrit 720p).
-                // Hasilnya: Cuma ada satu "Surrit" di daftar sumber.
-                // Resolusi (Tracks) akan dibaca otomatis oleh Player dari file .m3u8
-                
-                val quality = Qualities.Unknown.value
-
                 val sourceName = if (fixedUrl.contains("surrit")) "Surrit" else "MissAV"
 
-                callback.invoke(
-                    ExtractorLink(
-                        source = this.name,
-                        name = sourceName,
-                        url = fixedUrl,
-                        referer = data,
-                        quality = quality, // Set ke Unknown agar UI bersih
-                        isM3u8 = true      // Player akan parsing resolusi secara otomatis
+                // CEK: Apakah nama "Surrit" sudah pernah kita tambahkan di loop ini?
+                if (!addedNames.contains(sourceName)) {
+                    
+                    // Kalau belum, masukkan ke daftar dan panggil callback
+                    addedNames.add(sourceName)
+
+                    callback.invoke(
+                        ExtractorLink(
+                            source = this.name,
+                            name = sourceName,
+                            url = fixedUrl,
+                            referer = data,
+                            quality = Qualities.Unknown.value,
+                            isM3u8 = true
+                        )
                     )
-                )
+                }
+                // Kalau sudah ada (else), kita skip saja (ignore duplicates).
             }
 
             // --- PROSES SUBTITLE ---
