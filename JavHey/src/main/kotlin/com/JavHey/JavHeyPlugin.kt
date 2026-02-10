@@ -7,13 +7,14 @@ import android.content.Context
 @CloudstreamPlugin
 class JavHeyPlugin: Plugin() {
     override fun load(context: Context) {
-        // 1. Daftarkan Provider Utama (Situs JavHey)
+        // 1. Register Provider Utama
         registerMainAPI(JavHey())
 
-        // 2. Daftarkan Extractor (Server Video)
-        // Ini wajib agar saat aplikasi menemukan link "hglink.to" atau "haxloppd.com",
-        // ia tahu harus menggunakan logika di file Extractor.kt
+        // 2. Register SEMUA Extractor Server yang kita buat tadi
         registerExtractorAPI(Hglink())
         registerExtractorAPI(Haxloppd())
+        registerExtractorAPI(Minochinos()) // Baru
+        registerExtractorAPI(Bysebuho())   // Baru
+        registerExtractorAPI(GoTv())       // Baru
     }
 }
