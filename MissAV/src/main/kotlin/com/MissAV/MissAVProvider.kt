@@ -71,6 +71,7 @@ class MissAVProvider : MainAPI() {
         }
     }
 
+    // --- FUNGSI LOAD (DETAIL VIDEO + REKOMENDASI) ---
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
         val title = document.selectFirst("h1.text-base")?.text()?.trim() ?: "Unknown Title"
@@ -80,31 +81,40 @@ class MissAVProvider : MainAPI() {
             .maxByOrNull { it.text().length }?.text()?.trim()
             ?: document.selectFirst("meta[property='og:description']")?.attr("content")
 
+        // === FITUR SARAN FILM (REKOMENDASI) ===
+        // Mengambil daftar video lain yang ada di halaman tersebut
+        val recommendations = document.select("div.thumbnail").mapNotNull { element ->
+            val linkElement = element.selectFirst("a.text-secondary") ?: return@mapNotNull null
+            val href = linkElement.attr("href")
+            val fixedUrl = fixUrl(href)
+            val recTitle = linkElement.text().trim()
+            val img = element.selectFirst("img")
+            val recPoster = img?.attr("data-src") ?: img?.attr("src")
+
+            newMovieSearchResponse(recTitle, fixedUrl, TvType.NSFW) {
+                this.posterUrl = recPoster
+            }
+        }
+
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.plot = description
+            this.recommendations = recommendations // Masukkan saran film ke sini
         }
     }
 
     // --- LOGIKA SUBTITLE AKURAT (STRICT FILTER) ---
     private suspend fun fetchSubtitleCat(code: String, subtitleCallback: (SubtitleFile) -> Unit) {
         try {
-            // 1. Cari berdasarkan KODE (misal: SSNI-528)
             val searchUrl = "https://www.subtitlecat.com/index.php?search=$code"
             val searchDoc = app.get(searchUrl).document
             
             val searchResults = searchDoc.select("table.sub-table tbody tr td:nth-child(1) > a")
             
-            // Ambil 15 hasil teratas untuk dicek
             searchResults.take(15).forEach { linkElement ->
                 val resultTitle = linkElement.text().trim()
                 
-                // --- BAGIAN PENTING: PENJAGA GAWANG ---
-                // Kita cek: Apakah judul subtitle mengandung kode yang kita cari?
-                // ignoreCase = true (huruf besar/kecil dianggap sama)
-                // Jadi jika cari "ssni-528", judul "SSNI-528 English.srt" -> LOLOS ✅
-                // Tapi judul "SSNI-529.srt" -> DIBUANG ❌
-                
+                // FILTER: Judul subtitle harus mengandung Kode Video (misal: SSNI-528)
                 if (resultTitle.contains(code, ignoreCase = true)) {
                     var detailPath = linkElement.attr("href")
                     if (!detailPath.startsWith("http")) {
@@ -116,10 +126,7 @@ class MissAVProvider : MainAPI() {
                         val detailDoc = app.get(detailPath).document
                         
                         detailDoc.select("div.sub-single").forEach { item ->
-                            // Nama bahasa kita biarkan apa adanya (misal: Indonesian)
-                            // Supaya Player otomatis melakukan Grouping (1, 2, 3)
                             val rawLang = item.select("span").getOrNull(1)?.text()?.trim() ?: "Unknown"
-                            
                             val downloadEl = item.selectFirst("a.green-link")
                             val downloadHref = downloadEl?.attr("href")
 
@@ -139,7 +146,6 @@ class MissAVProvider : MainAPI() {
                             }
                         }
                     } catch (e: Exception) {
-                        // Skip jika satu link error
                     }
                 }
             }
@@ -166,7 +172,6 @@ class MissAVProvider : MainAPI() {
             it.groupValues[1].replace("\\/", "/") 
         }.toSet()
 
-        // Filter nama sumber agar tidak ganda
         val addedNames = mutableListOf<String>()
 
         if (uniqueUrls.isNotEmpty()) {
@@ -181,20 +186,15 @@ class MissAVProvider : MainAPI() {
                             name = sourceName,
                             url = fixedUrl,
                             referer = data,
-                            quality = Qualities.Unknown.value, // Biar video trek muncul otomatis
+                            quality = Qualities.Unknown.value,
                             isM3u8 = true
                         )
                     )
                 }
             }
 
-            // --- PROSES KODE ID ---
-            // Regex ini dirancang khusus untuk format JAV:
-            // [Huruf 2-5 digit] - [Angka 3-5 digit]
-            // Contoh: SSNI-528, JUX-729, FAD-123
+            // PROSES KODE ID
             val codeRegex = Regex("""([a-zA-Z]{2,5}-\d{3,5})""")
-            
-            // Kita cari kode di URL halaman (data) karena paling akurat
             val codeMatch = codeRegex.find(data)
             val code = codeMatch?.value
             
