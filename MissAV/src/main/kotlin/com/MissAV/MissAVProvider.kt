@@ -14,6 +14,7 @@ class MissAVProvider : MainAPI() {
     override var lang = "id"
     override val supportedTypes = setOf(TvType.NSFW)
 
+    // --- 1. KATEGORI UTAMA ---
     override val mainPage = mainPageOf(
         "$mainUrl/$lang/uncensored-leak" to "Kebocoran Tanpa Sensor",
         "$mainUrl/$lang/release" to "Keluaran Terbaru",
@@ -21,6 +22,7 @@ class MissAVProvider : MainAPI() {
         "$mainUrl/$lang/genres/Wanita%20Menikah/Ibu%20Rumah%20Tangga" to "Wanita Menikah"
     )
 
+    // --- 2. HALAMAN UTAMA ---
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val url = if (page > 1) "${request.data}?page=$page" else request.data
         val document = app.get(url).document
@@ -30,6 +32,7 @@ class MissAVProvider : MainAPI() {
             val linkElement = element.selectFirst("a.text-secondary") ?: return@forEach
             val href = linkElement.attr("href")
             val fixedUrl = fixUrl(href)
+            
             val title = linkElement.text().trim()
             val img = element.selectFirst("img")
             val posterUrl = img?.attr("data-src") ?: img?.attr("src")
@@ -40,14 +43,20 @@ class MissAVProvider : MainAPI() {
         }
         
         return newHomePageResponse(
-            HomePageList(name = request.name, list = homeItems, isHorizontalImages = true),
+            HomePageList(
+                name = request.name,
+                list = homeItems,
+                isHorizontalImages = true 
+            ),
             hasNext = true
         )
     }
 
+    // --- 3. PENCARIAN ---
     override suspend fun search(query: String): List<SearchResponse> {
         val fixedQuery = query.trim().replace(" ", "-")
         val url = "$mainUrl/$lang/search/$fixedQuery"
+        
         return try {
             val document = app.get(url).document
             val results = ArrayList<SearchResponse>()
@@ -56,6 +65,7 @@ class MissAVProvider : MainAPI() {
                 val linkElement = element.selectFirst("a.text-secondary") ?: return@forEach
                 val href = linkElement.attr("href")
                 val fixedUrl = fixUrl(href)
+                
                 val title = linkElement.text().trim()
                 val img = element.selectFirst("img")
                 val posterUrl = img?.attr("data-src") ?: img?.attr("src")
@@ -71,11 +81,15 @@ class MissAVProvider : MainAPI() {
         }
     }
 
+    // --- 4. DETAIL VIDEO ---
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
+
         val title = document.selectFirst("h1.text-base")?.text()?.trim() ?: "Unknown Title"
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: document.selectFirst("video.player")?.attr("poster")
+        
+        // Logika Pintar: Ambil elemen teks terpanjang di 'text-secondary' sebagai deskripsi
         val description = document.select("div.text-secondary")
             .maxByOrNull { it.text().length }?.text()?.trim()
             ?: document.selectFirst("meta[property='og:description']")?.attr("content")
@@ -86,23 +100,28 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // --- FUNGSI SUBTITLE ---
+    // --- 5. LOGIKA SUBTITLE (SubtitleCat) ---
     private suspend fun fetchSubtitleCat(code: String, subtitleCallback: (SubtitleFile) -> Unit) {
         try {
+            // A. Cari Kode Film
             val searchUrl = "https://www.subtitlecat.com/index.php?search=$code"
             val searchDoc = app.get(searchUrl).document
             
+            // B. Ambil hasil pertama
             val firstResult = searchDoc.selectFirst("table.sub-table tbody tr td:nth-child(1) > a")
             
             if (firstResult != null) {
                 var detailPath = firstResult.attr("href")
+                // Fix URL Relatif
                 if (!detailPath.startsWith("http")) {
                     detailPath = if (detailPath.startsWith("/")) detailPath else "/$detailPath"
                     detailPath = "https://www.subtitlecat.com$detailPath"
                 }
 
+                // C. Masuk Halaman Detail
                 val detailDoc = app.get(detailPath).document
                 
+                // D. Ambil Link Download (Tombol Hijau / green-link)
                 detailDoc.select("div.sub-single").forEach { item ->
                     val langText = item.select("span").getOrNull(1)?.text()?.trim() ?: "Unknown"
                     val downloadEl = item.selectFirst("a.green-link")
@@ -129,6 +148,8 @@ class MissAVProvider : MainAPI() {
         }
     }
 
+    // --- 6. PEMUTAR VIDEO (LOAD LINKS) ---
+    // Suppress Error Deprecated agar build sukses di versi Gradle baru
     @Suppress("DEPRECATION_ERROR") 
     override suspend fun loadLinks(
         data: String,
@@ -137,8 +158,9 @@ class MissAVProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         
+        // A. Video Extractor
         var text = app.get(data).text
-        text = getAndUnpack(text) 
+        text = getAndUnpack(text) // Membuka enkripsi JS (eval)
 
         val m3u8Regex = Regex("""(https?:\\?\/\\?\/[^"']+\.m3u8)""")
         val matches = m3u8Regex.findAll(text)
@@ -158,6 +180,7 @@ class MissAVProvider : MainAPI() {
 
                 val sourceName = if (fixedUrl.contains("surrit")) "Surrit (HD)" else "MissAV (Backup)"
 
+                // Menggunakan Constructor Lama (Stabil)
                 callback.invoke(
                     ExtractorLink(
                         source = this.name,
@@ -170,21 +193,16 @@ class MissAVProvider : MainAPI() {
                 )
             }
 
-            // --- PROSES SUBTITLE (PINDAH KE BAWAH) ---
-            // Kita panggil langsung (tanpa ioSafe) agar tidak error 'Unresolved reference'.
-            // Ini akan berjalan setelah link video ditemukan.
+            // B. Subtitle Fetcher (Sequential)
+            // Dijalankan setelah link video ditemukan agar tidak menghambat player
             val codeRegex = Regex("""([a-zA-Z]{2,5}-\d{3,5})""")
             val codeMatch = codeRegex.find(data)
             val code = codeMatch?.value
             
             if (code != null) {
-                try {
-                    fetchSubtitleCat(code, subtitleCallback)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                // Panggil langsung tanpa ioSafe (Aman dari crash)
+                fetchSubtitleCat(code, subtitleCallback)
             }
-            // -----------------------------------------
 
             return true
         }
