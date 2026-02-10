@@ -6,6 +6,7 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getAndUnpack
 import org.jsoup.nodes.Element
 
+@OptIn(com.lagradost.cloudstream3.Prerelease::class)
 class MissAVProvider : MainAPI() {
     override var mainUrl = "https://missav.ws"
     override var name = "MissAV"
@@ -22,7 +23,6 @@ class MissAVProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val url = if (page > 1) "${request.data}?page=$page" else request.data
-        
         val document = app.get(url).document
         val homeItems = ArrayList<SearchResponse>()
 
@@ -30,7 +30,6 @@ class MissAVProvider : MainAPI() {
             val linkElement = element.selectFirst("a.text-secondary") ?: return@forEach
             val href = linkElement.attr("href")
             val fixedUrl = fixUrl(href)
-            
             val title = linkElement.text().trim()
             val img = element.selectFirst("img")
             val posterUrl = img?.attr("data-src") ?: img?.attr("src")
@@ -41,11 +40,7 @@ class MissAVProvider : MainAPI() {
         }
         
         return newHomePageResponse(
-            HomePageList(
-                name = request.name,
-                list = homeItems,
-                isHorizontalImages = true 
-            ),
+            HomePageList(name = request.name, list = homeItems, isHorizontalImages = true),
             hasNext = true
         )
     }
@@ -53,7 +48,6 @@ class MissAVProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse> {
         val fixedQuery = query.trim().replace(" ", "-")
         val url = "$mainUrl/$lang/search/$fixedQuery"
-        
         return try {
             val document = app.get(url).document
             val results = ArrayList<SearchResponse>()
@@ -62,7 +56,6 @@ class MissAVProvider : MainAPI() {
                 val linkElement = element.selectFirst("a.text-secondary") ?: return@forEach
                 val href = linkElement.attr("href")
                 val fixedUrl = fixUrl(href)
-                
                 val title = linkElement.text().trim()
                 val img = element.selectFirst("img")
                 val posterUrl = img?.attr("data-src") ?: img?.attr("src")
@@ -80,7 +73,6 @@ class MissAVProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
-
         val title = document.selectFirst("h1.text-base")?.text()?.trim() ?: "Unknown Title"
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: document.selectFirst("video.player")?.attr("poster")
@@ -94,38 +86,29 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // --- FUNGSI SUBTITLE (SUBTITLECAT) ---
+    // --- FUNGSI SUBTITLE ---
     private suspend fun fetchSubtitleCat(code: String, subtitleCallback: (SubtitleFile) -> Unit) {
         try {
-            // 1. Cari film di SubtitleCat berdasarkan kode (contoh: JUX-584)
             val searchUrl = "https://www.subtitlecat.com/index.php?search=$code"
             val searchDoc = app.get(searchUrl).document
             
-            // Ambil link detail pertama dari hasil pencarian
-            // Selector: table class sub-table -> tbody -> tr -> td pertama -> a
             val firstResult = searchDoc.selectFirst("table.sub-table tbody tr td:nth-child(1) > a")
             
             if (firstResult != null) {
                 var detailPath = firstResult.attr("href")
-                // Fix jika link relatif (subs/...) menjadi absolute (https://...)
                 if (!detailPath.startsWith("http")) {
                     detailPath = if (detailPath.startsWith("/")) detailPath else "/$detailPath"
                     detailPath = "https://www.subtitlecat.com$detailPath"
                 }
 
-                // 2. Buka Halaman Detail untuk ambil link download
                 val detailDoc = app.get(detailPath).document
                 
-                // Selector: div class sub-single
                 detailDoc.select("div.sub-single").forEach { item ->
-                    // Bahasa ada di span ke-2
                     val langText = item.select("span").getOrNull(1)?.text()?.trim() ?: "Unknown"
-                    // Link download ada di tag 'a' dengan class 'green-link'
                     val downloadEl = item.selectFirst("a.green-link")
                     val downloadHref = downloadEl?.attr("href")
 
                     if (downloadHref != null) {
-                         // Fix link download relatif menjadi absolute
                         val finalUrl = if (downloadHref.startsWith("http")) {
                             downloadHref
                         } else {
@@ -146,7 +129,6 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // --- LOAD LINKS & EXECUTE SUBTITLE ---
     @Suppress("DEPRECATION_ERROR") 
     override suspend fun loadLinks(
         data: String,
@@ -155,20 +137,6 @@ class MissAVProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         
-        // 1. EKSEKUSI PENCARIAN SUBTITLE
-        // Regex untuk mengambil kode film (Format: HURUF-ANGKA, contoh: JUX-584)
-        val codeRegex = Regex("""([a-zA-Z]{2,5}-\d{3,5})""")
-        val codeMatch = codeRegex.find(data)
-        val code = codeMatch?.value
-        
-        if (code != null) {
-            // Jalankan di thread terpisah (Async) agar video cepat loading
-            com.lagradost.cloudstream3.utils.Coroutines.ioSafe {
-                fetchSubtitleCat(code, subtitleCallback)
-            }
-        }
-
-        // 2. EKSEKUSI PENCARIAN VIDEO
         var text = app.get(data).text
         text = getAndUnpack(text) 
 
@@ -201,6 +169,23 @@ class MissAVProvider : MainAPI() {
                     )
                 )
             }
+
+            // --- PROSES SUBTITLE (PINDAH KE BAWAH) ---
+            // Kita panggil langsung (tanpa ioSafe) agar tidak error 'Unresolved reference'.
+            // Ini akan berjalan setelah link video ditemukan.
+            val codeRegex = Regex("""([a-zA-Z]{2,5}-\d{3,5})""")
+            val codeMatch = codeRegex.find(data)
+            val code = codeMatch?.value
+            
+            if (code != null) {
+                try {
+                    fetchSubtitleCat(code, subtitleCallback)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            // -----------------------------------------
+
             return true
         }
         return false
