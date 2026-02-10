@@ -3,17 +3,16 @@ package com.MissAV
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.getAndUnpack // Fungsi untuk membongkar Packed JS
+import com.lagradost.cloudstream3.utils.getAndUnpack // Digunakan untuk membongkar JavaScript terenkripsi
 import org.jsoup.nodes.Element
 
 class MissAVProvider : MainAPI() {
     override var mainUrl = "https://missav.ws"
     override var name = "MissAV"
     override val hasMainPage = true
-    override var lang = "id" // Mengatur bahasa default ke Indonesia
+    override var lang = "id" // Bahasa default penyedia
     override val supportedTypes = setOf(TvType.NSFW)
 
-    // --- 1. DAFTAR KATEGORI UTAMA ---
     override val mainPage = mainPageOf(
         "$mainUrl/$lang/uncensored-leak" to "Kebocoran Tanpa Sensor",
         "$mainUrl/$lang/release" to "Keluaran Terbaru",
@@ -21,7 +20,6 @@ class MissAVProvider : MainAPI() {
         "$mainUrl/$lang/genres/Wanita%20Menikah/Ibu%20Rumah%20Tangga" to "Wanita Menikah"
     )
 
-    // --- 2. HALAMAN DEPAN (BROWSE) ---
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val url = if (page > 1) "${request.data}?page=$page" else request.data
         val document = app.get(url).document
@@ -41,7 +39,6 @@ class MissAVProvider : MainAPI() {
             })
         }
         
-        // Membungkus ke HomePageList agar mendukung tampilan Horizontal
         return newHomePageResponse(
             HomePageList(
                 name = request.name,
@@ -52,7 +49,6 @@ class MissAVProvider : MainAPI() {
         )
     }
 
-    // --- 3. PENCARIAN (SEARCH) ---
     override suspend fun search(query: String): List<SearchResponse> {
         val fixedQuery = query.trim().replace(" ", "-")
         val url = "$mainUrl/$lang/search/$fixedQuery"
@@ -81,7 +77,6 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // --- 4. DETAIL FILM ---
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
 
@@ -89,7 +84,6 @@ class MissAVProvider : MainAPI() {
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: document.selectFirst("video.player")?.attr("poster")
         
-        // Logika cerdas mencari deskripsi teks terpanjang
         val description = document.select("div.text-secondary")
             .maxByOrNull { it.text().length }?.text()?.trim()
             ?: document.selectFirst("meta[property='og:description']")?.attr("content")
@@ -100,14 +94,13 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // --- 5. LOGIKA SUBTITLE (SUBTITLECAT - KHUSUS INDONESIA) ---
+    // --- FUNGSI SUBTITLE (MENARIK SEMUA VERSI INDONESIA) ---
     private suspend fun fetchSubtitleCat(code: String, subtitleCallback: (SubtitleFile) -> Unit) {
         try {
-            // Pencarian berdasarkan kode film unik (contoh: ADN-753)
             val searchUrl = "https://www.subtitlecat.com/index.php?search=$code"
             val searchDoc = app.get(searchUrl).document
             
-            // Mencari baris hasil yang mengandung kode film tersebut
+            // Ambil semua hasil pencarian yang relevan dengan kode film
             val searchResults = searchDoc.select("table.sub-table tbody tr td:nth-child(1) > a")
             val targetResult = searchResults.find { it.text().contains(code, ignoreCase = true) } ?: searchResults.firstOrNull()
 
@@ -120,15 +113,17 @@ class MissAVProvider : MainAPI() {
 
                 val detailDoc = app.get(detailPath).document
                 
-                // Mencari semua kotak subtitle yang tersedia [berdasarkan analisa HTML user]
-                detailDoc.select("div.sub-single").forEach { item ->
+                // Ambil semua item dari halaman detail
+                val subItems = detailDoc.select("div.sub-single")
+                var count = 1
+
+                subItems.forEach { item ->
                     val langText = item.select("span").getOrNull(1)?.text()?.trim() ?: ""
-                    val downloadEl = item.selectFirst("a.green-link") // Mengambil link tombol hijau
+                    val downloadEl = item.selectFirst("a.green-link")
                     val downloadHref = downloadEl?.attr("href")
 
                     if (downloadHref != null) {
-                        // FILTER: Hanya ambil yang label bahasanya "Indonesian"
-                        // Hal ini dilakukan untuk menghindari subtitle sampah/bahasa lain
+                        // LOGIKA BARU: Jika mengandung kata "Indonesian", ambil semuanya
                         if (langText.contains("Indonesian", ignoreCase = true)) {
                             val finalUrl = if (downloadHref.startsWith("http")) {
                                 downloadHref
@@ -136,12 +131,14 @@ class MissAVProvider : MainAPI() {
                                 "https://www.subtitlecat.com$downloadHref"
                             }
                             
+                            // Memberikan label unik agar kamu bisa memilih versi yang berbeda di player
                             subtitleCallback.invoke(
                                 SubtitleFile(
-                                    lang = "Indonesian",
+                                    lang = "Indonesian v$count",
                                     url = finalUrl
                                 )
                             )
+                            count++
                         }
                     }
                 }
@@ -151,7 +148,6 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // --- 6. EKSTRAKSI VIDEO DAN SUBTITLE ---
     @Suppress("DEPRECATION_ERROR") // Mengizinkan penggunaan constructor ExtractorLink yang stabil
     override suspend fun loadLinks(
         data: String,
@@ -160,9 +156,9 @@ class MissAVProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         
-        // A. Ambil Link Video
+        // A. Proses Video
         var text = app.get(data).text
-        text = getAndUnpack(text) // Unpack JS untuk mendapatkan link m3u8 asli
+        text = getAndUnpack(text) // Membuka Packed JS untuk link video
 
         val m3u8Regex = Regex("""(https?:\\?\/\\?\/[^"']+\.m3u8)""")
         val matches = m3u8Regex.findAll(text)
@@ -182,7 +178,6 @@ class MissAVProvider : MainAPI() {
 
                 val sourceName = if (fixedUrl.contains("surrit")) "Surrit (HD)" else "MissAV (Backup)"
 
-                // Mengirim link video ke player
                 callback.invoke(
                     ExtractorLink(
                         source = this.name,
@@ -195,14 +190,13 @@ class MissAVProvider : MainAPI() {
                 )
             }
 
-            // B. Cari Subtitle (Setelah link video berhasil dikirim)
-            // Mengambil kode film dari URL menggunakan Regex
+            // B. Proses Subtitle (Semua versi Indonesia)
             val codeRegex = Regex("""([a-zA-Z]{2,5}-\d{3,5})""")
             val codeMatch = codeRegex.find(data)
             val code = codeMatch?.value
             
             if (code != null) {
-                // Eksekusi pencarian subtitle di SubtitleCat secara sequential agar aman
+                // Mencari dan mengirim semua subtitle Indonesia yang tersedia ke callback
                 fetchSubtitleCat(code, subtitleCallback)
             }
 
