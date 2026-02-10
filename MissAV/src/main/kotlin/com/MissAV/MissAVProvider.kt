@@ -86,42 +86,52 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // --- FUNGSI SUBTITLE ---
+    // --- FUNGSI SUBTITLE DIPERBAIKI (MULTI-SOURCE) ---
     private suspend fun fetchSubtitleCat(code: String, subtitleCallback: (SubtitleFile) -> Unit) {
         try {
             val searchUrl = "https://www.subtitlecat.com/index.php?search=$code"
             val searchDoc = app.get(searchUrl).document
             
-            val firstResult = searchDoc.selectFirst("table.sub-table tbody tr td:nth-child(1) > a")
+            // PERBAIKAN: Mengambil 5 hasil pencarian teratas, bukan cuma satu.
+            val searchResults = searchDoc.select("table.sub-table tbody tr td:nth-child(1) > a")
             
-            if (firstResult != null) {
-                var detailPath = firstResult.attr("href")
+            // Loop maksimal 5 hasil agar tidak terlalu lama loading
+            searchResults.take(5).forEachIndexed { index, linkElement ->
+                var detailPath = linkElement.attr("href")
                 if (!detailPath.startsWith("http")) {
                     detailPath = if (detailPath.startsWith("/")) detailPath else "/$detailPath"
                     detailPath = "https://www.subtitlecat.com$detailPath"
                 }
 
-                val detailDoc = app.get(detailPath).document
-                
-                detailDoc.select("div.sub-single").forEach { item ->
-                    val langText = item.select("span").getOrNull(1)?.text()?.trim() ?: "Unknown"
-                    val downloadEl = item.selectFirst("a.green-link")
-                    val downloadHref = downloadEl?.attr("href")
+                try {
+                    val detailDoc = app.get(detailPath).document
+                    
+                    detailDoc.select("div.sub-single").forEach { item ->
+                        val rawLang = item.select("span").getOrNull(1)?.text()?.trim() ?: "Unknown"
+                        val downloadEl = item.selectFirst("a.green-link")
+                        val downloadHref = downloadEl?.attr("href")
 
-                    if (downloadHref != null) {
-                        val finalUrl = if (downloadHref.startsWith("http")) {
-                            downloadHref
-                        } else {
-                            "https://www.subtitlecat.com$downloadHref"
-                        }
-                        
-                        subtitleCallback.invoke(
-                            SubtitleFile(
-                                lang = langText,
-                                url = finalUrl
+                        // PERBAIKAN: Menambahkan angka di belakang bahasa (misal: Indonesian 1, Indonesian 2)
+                        // index + 1 menunjukkan varian sumber subtitle yang berbeda
+                        val labeledLang = "$rawLang ${index + 1}"
+
+                        if (downloadHref != null) {
+                            val finalUrl = if (downloadHref.startsWith("http")) {
+                                downloadHref
+                            } else {
+                                "https://www.subtitlecat.com$downloadHref"
+                            }
+                            
+                            subtitleCallback.invoke(
+                                SubtitleFile(
+                                    lang = labeledLang, 
+                                    url = finalUrl
+                                )
                             )
-                        )
+                        }
                     }
+                } catch (e: Exception) {
+                    // Ignore error per item
                 }
             }
         } catch (e: Exception) {
@@ -156,12 +166,14 @@ class MissAVProvider : MainAPI() {
                     else -> Qualities.Unknown.value
                 }
 
+                // PERBAIKAN: Nama Sumber diseragamkan agar terlihat bersih di UI
+                // Tidak lagi pakai "$sourceName $quality"
                 val sourceName = if (fixedUrl.contains("surrit")) "Surrit (HD)" else "MissAV (Backup)"
 
                 callback.invoke(
                     ExtractorLink(
                         source = this.name,
-                        name = "$sourceName $quality",
+                        name = sourceName, // Nama sama untuk semua kualitas
                         url = fixedUrl,
                         referer = data,
                         quality = quality,
@@ -170,21 +182,19 @@ class MissAVProvider : MainAPI() {
                 )
             }
 
-            // --- PROSES SUBTITLE (PINDAH KE BAWAH) ---
-            // Kita panggil langsung (tanpa ioSafe) agar tidak error 'Unresolved reference'.
-            // Ini akan berjalan setelah link video ditemukan.
+            // --- PROSES SUBTITLE ---
             val codeRegex = Regex("""([a-zA-Z]{2,5}-\d{3,5})""")
             val codeMatch = codeRegex.find(data)
             val code = codeMatch?.value
             
             if (code != null) {
-                try {
+                // Jalankan di background agar tidak memblokir loading video
+                 try {
                     fetchSubtitleCat(code, subtitleCallback)
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
             }
-            // -----------------------------------------
 
             return true
         }
