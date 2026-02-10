@@ -7,7 +7,6 @@ import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.M3u8Helper
 import com.lagradost.cloudstream3.utils.newExtractorLink
-import com.lagradost.cloudstream3.utils.getAndUnpack // <--- PENTING: Import baru untuk bongkar kode
 import java.net.URI
 
 // --- DAFTAR SERVER ---
@@ -26,43 +25,50 @@ open class JavHeyDood(override var mainUrl: String, override var name: String) :
         subtitleCallback: (com.lagradost.cloudstream3.SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        // 1. JANGAN ubah /v/ jadi /e/ lagi (Minochinos error kalau diubah)
+        // 1. Jangan ubah /v/ jadi /e/ (Minochinos butuh /v/)
         val targetUrl = url 
         
         try {
-            // 2. Ambil halaman
-            val responseReq = app.get(targetUrl, referer = "https://javhey.com/")
-            var response = responseReq.text
+            // 2. Ambil halaman HTML
+            // Timeout dipanjangkan sedikit (15s) untuk jaga-jaga
+            val responseReq = app.get(targetUrl, referer = "https://javhey.com/", timeout = 15)
+            val response = responseReq.text
             val currentHost = "https://" + URI(responseReq.url).host
 
-            // 3. FITUR BARU: Cek & Bongkar JavaScript (Solusi untuk Haxloppd & GoTv)
-            if (!response.contains("/pass_md5/")) {
-                 response = getAndUnpack(response) // Bongkar kode yang disembunyikan
+            // 3. Cari endpoint pass_md5
+            // Kita pakai regex yang lebih fleksibel untuk menangkap variasi Doodstream
+            var md5Match = Regex("""/pass_md5/[^']*""").find(response)?.value
+
+            // JIKA MD5 TIDAK KETEMU (Kasus Haxloppd/GoTv yang dipacking)
+            if (md5Match == null) {
+                // Cari pola "makePlay('...')" yang biasa dipakai di script packing
+                val makePlayMatch = Regex("""makePlay\('([^']*)'\)""").find(response)
+                if (makePlayMatch != null) {
+                     val playPath = makePlayMatch.groupValues[1]
+                     md5Match = "/pass_md5/$playPath" // Rekonstruksi manual path-nya
+                }
             }
 
-            // 4. Cari endpoint pass_md5 (Sekarang pasti ketemu)
-            val md5Pattern = Regex("""/pass_md5/[^']*""")
-            val md5Match = md5Pattern.find(response)?.value
-
             if (md5Match != null) {
+                // Gunakan host asli untuk request token
                 val trueUrl = "$currentHost$md5Match"
                 
-                // 5. Request Token
+                // 4. Request Token (Wajib Referer Asli)
                 val tokenResponse = app.get(trueUrl, referer = targetUrl).text
 
-                // 6. Buat Link Video
+                // 5. Buat Link Video
                 val randomString = generateRandomString()
                 val videoUrl = "$tokenResponse$randomString?token=${md5Match.substringAfterLast("/")}&expiry=${System.currentTimeMillis()}"
 
-                // 7. Kirim Link
+                // 6. Kirim Link
                 M3u8Helper.generateM3u8(
                     name,
                     videoUrl,
                     targetUrl,
-                    headers = mapOf("Origin" to currentHost)
+                    headers = mapOf("Origin" to currentHost, "Referer" to targetUrl)
                 ).forEach(callback)
             } else {
-                // Fallback: Redirect langsung
+                // Fallback terakhir: Cari redirect window.location
                 val redirectMatch = Regex("""window\.location\.replace\('([^']*)'\)""").find(response)
                 if (redirectMatch != null) {
                     callback.invoke(
