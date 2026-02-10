@@ -4,6 +4,7 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.getAndUnpack
+import com.lagradost.cloudstream3.utils.INFER_TYPE
 import org.jsoup.nodes.Element
 
 @OptIn(com.lagradost.cloudstream3.Prerelease::class)
@@ -86,17 +87,16 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // --- FUNGSI SUBTITLE DIPERBAIKI (MULTI-SOURCE) ---
+    // --- LOGIKA SUBTITLE GROUPING ---
     private suspend fun fetchSubtitleCat(code: String, subtitleCallback: (SubtitleFile) -> Unit) {
         try {
             val searchUrl = "https://www.subtitlecat.com/index.php?search=$code"
             val searchDoc = app.get(searchUrl).document
             
-            // PERBAIKAN: Mengambil 5 hasil pencarian teratas, bukan cuma satu.
             val searchResults = searchDoc.select("table.sub-table tbody tr td:nth-child(1) > a")
             
-            // Loop maksimal 5 hasil agar tidak terlalu lama loading
-            searchResults.take(5).forEachIndexed { index, linkElement ->
+            // Ambil 10 varian, tapi JANGAN diberi nomor di namanya.
+            searchResults.take(10).forEach { linkElement ->
                 var detailPath = linkElement.attr("href")
                 if (!detailPath.startsWith("http")) {
                     detailPath = if (detailPath.startsWith("/")) detailPath else "/$detailPath"
@@ -107,13 +107,12 @@ class MissAVProvider : MainAPI() {
                     val detailDoc = app.get(detailPath).document
                     
                     detailDoc.select("div.sub-single").forEach { item ->
+                        // Disini kuncinya: Nama bahasa harus "Indonesian" saja (tanpa angka)
+                        // Player akan otomatis mendeteksi duplikat nama dan membuat menu 1,2,3...
                         val rawLang = item.select("span").getOrNull(1)?.text()?.trim() ?: "Unknown"
+                        
                         val downloadEl = item.selectFirst("a.green-link")
                         val downloadHref = downloadEl?.attr("href")
-
-                        // PERBAIKAN: Menambahkan angka di belakang bahasa (misal: Indonesian 1, Indonesian 2)
-                        // index + 1 menunjukkan varian sumber subtitle yang berbeda
-                        val labeledLang = "$rawLang ${index + 1}"
 
                         if (downloadHref != null) {
                             val finalUrl = if (downloadHref.startsWith("http")) {
@@ -124,14 +123,14 @@ class MissAVProvider : MainAPI() {
                             
                             subtitleCallback.invoke(
                                 SubtitleFile(
-                                    lang = labeledLang, 
+                                    lang = rawLang, // Langsung nama bahasa aslinya
                                     url = finalUrl
                                 )
                             )
                         }
                     }
                 } catch (e: Exception) {
-                    // Ignore error per item
+                    // Skip error
                 }
             }
         } catch (e: Exception) {
@@ -153,31 +152,31 @@ class MissAVProvider : MainAPI() {
         val m3u8Regex = Regex("""(https?:\\?\/\\?\/[^"']+\.m3u8)""")
         val matches = m3u8Regex.findAll(text)
         
-        if (matches.count() > 0) {
-            matches.forEach { match ->
-                val rawUrl = match.groupValues[1]
-                val fixedUrl = rawUrl.replace("\\/", "/")
+        // Deduping URL supaya sumber video bersih
+        val uniqueUrls = matches.map { 
+            it.groupValues[1].replace("\\/", "/") 
+        }.toSet()
 
+        if (uniqueUrls.isNotEmpty()) {
+            uniqueUrls.forEach { fixedUrl ->
+                
                 val quality = when {
                     fixedUrl.contains("1280x720") || fixedUrl.contains("720p") -> Qualities.P720.value
                     fixedUrl.contains("1920x1080") || fixedUrl.contains("1080p") -> Qualities.P1080.value
                     fixedUrl.contains("842x480") || fixedUrl.contains("480p") -> Qualities.P480.value
-                    fixedUrl.contains("240p") -> Qualities.P240.value
                     else -> Qualities.Unknown.value
                 }
 
-                // PERBAIKAN: Nama Sumber diseragamkan agar terlihat bersih di UI
-                // Tidak lagi pakai "$sourceName $quality"
-                val sourceName = if (fixedUrl.contains("surrit")) "Surrit (HD)" else "MissAV (Backup)"
+                val sourceName = if (fixedUrl.contains("surrit")) "Surrit" else "MissAV"
 
                 callback.invoke(
                     ExtractorLink(
                         source = this.name,
-                        name = sourceName, // Nama sama untuk semua kualitas
+                        name = sourceName,
                         url = fixedUrl,
                         referer = data,
                         quality = quality,
-                        isM3u8 = true 
+                        isM3u8 = true
                     )
                 )
             }
@@ -188,8 +187,7 @@ class MissAVProvider : MainAPI() {
             val code = codeMatch?.value
             
             if (code != null) {
-                // Jalankan di background agar tidak memblokir loading video
-                 try {
+                try {
                     fetchSubtitleCat(code, subtitleCallback)
                 } catch (e: Exception) {
                     e.printStackTrace()
