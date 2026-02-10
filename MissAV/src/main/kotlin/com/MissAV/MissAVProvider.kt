@@ -3,7 +3,7 @@ package com.MissAV
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.getAndUnpack // Ada di ExtractorApi.kt baris 632
+import com.lagradost.cloudstream3.utils.getAndUnpack
 import org.jsoup.nodes.Element
 
 class MissAVProvider : MainAPI() {
@@ -40,8 +40,6 @@ class MissAVProvider : MainAPI() {
             })
         }
         
-        // PERBAIKAN 1: Sesuai MainAPI.kt baris 348 dan 398
-        // Kita bungkus manual ke HomePageList agar bisa set isHorizontalImages
         return newHomePageResponse(
             HomePageList(
                 name = request.name,
@@ -86,8 +84,6 @@ class MissAVProvider : MainAPI() {
         val title = document.selectFirst("h1.text-base")?.text()?.trim() ?: "Unknown Title"
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: document.selectFirst("video.player")?.attr("poster")
-
-        // Ambil deskripsi dari text terpanjang di class text-secondary
         val description = document.select("div.text-secondary")
             .maxByOrNull { it.text().length }?.text()?.trim()
             ?: document.selectFirst("meta[property='og:description']")?.attr("content")
@@ -98,9 +94,59 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // PERBAIKAN 2: Gunakan DEPRECATION_ERROR
-    // Sesuai ExtractorApi.kt baris 528, constructor ini levelnya ERROR.
-    // Kita harus paksa suppress level error ini.
+    // --- FUNGSI SUBTITLE (SUBTITLECAT) ---
+    private suspend fun fetchSubtitleCat(code: String, subtitleCallback: (SubtitleFile) -> Unit) {
+        try {
+            // 1. Cari film di SubtitleCat berdasarkan kode (contoh: JUX-584)
+            val searchUrl = "https://www.subtitlecat.com/index.php?search=$code"
+            val searchDoc = app.get(searchUrl).document
+            
+            // Ambil link detail pertama dari hasil pencarian
+            // Selector: table class sub-table -> tbody -> tr -> td pertama -> a
+            val firstResult = searchDoc.selectFirst("table.sub-table tbody tr td:nth-child(1) > a")
+            
+            if (firstResult != null) {
+                var detailPath = firstResult.attr("href")
+                // Fix jika link relatif (subs/...) menjadi absolute (https://...)
+                if (!detailPath.startsWith("http")) {
+                    detailPath = if (detailPath.startsWith("/")) detailPath else "/$detailPath"
+                    detailPath = "https://www.subtitlecat.com$detailPath"
+                }
+
+                // 2. Buka Halaman Detail untuk ambil link download
+                val detailDoc = app.get(detailPath).document
+                
+                // Selector: div class sub-single
+                detailDoc.select("div.sub-single").forEach { item ->
+                    // Bahasa ada di span ke-2
+                    val langText = item.select("span").getOrNull(1)?.text()?.trim() ?: "Unknown"
+                    // Link download ada di tag 'a' dengan class 'green-link'
+                    val downloadEl = item.selectFirst("a.green-link")
+                    val downloadHref = downloadEl?.attr("href")
+
+                    if (downloadHref != null) {
+                         // Fix link download relatif menjadi absolute
+                        val finalUrl = if (downloadHref.startsWith("http")) {
+                            downloadHref
+                        } else {
+                            "https://www.subtitlecat.com$downloadHref"
+                        }
+                        
+                        subtitleCallback.invoke(
+                            SubtitleFile(
+                                lang = langText,
+                                url = finalUrl
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    // --- LOAD LINKS & EXECUTE SUBTITLE ---
     @Suppress("DEPRECATION_ERROR") 
     override suspend fun loadLinks(
         data: String,
@@ -109,8 +155,22 @@ class MissAVProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         
+        // 1. EKSEKUSI PENCARIAN SUBTITLE
+        // Regex untuk mengambil kode film (Format: HURUF-ANGKA, contoh: JUX-584)
+        val codeRegex = Regex("""([a-zA-Z]{2,5}-\d{3,5})""")
+        val codeMatch = codeRegex.find(data)
+        val code = codeMatch?.value
+        
+        if (code != null) {
+            // Jalankan di thread terpisah (Async) agar video cepat loading
+            com.lagradost.cloudstream3.utils.Coroutines.ioSafe {
+                fetchSubtitleCat(code, subtitleCallback)
+            }
+        }
+
+        // 2. EKSEKUSI PENCARIAN VIDEO
         var text = app.get(data).text
-        text = getAndUnpack(text) // Fungsi dari ExtractorApi.kt
+        text = getAndUnpack(text) 
 
         val m3u8Regex = Regex("""(https?:\\?\/\\?\/[^"']+\.m3u8)""")
         val matches = m3u8Regex.findAll(text)
@@ -130,9 +190,6 @@ class MissAVProvider : MainAPI() {
 
                 val sourceName = if (fixedUrl.contains("surrit")) "Surrit (HD)" else "MissAV (Backup)"
 
-                // Menggunakan Constructor LAMA (ExtractorApi.kt Baris 528)
-                // Ini satu-satunya cara memasukkan 'referer' dan 'isM3u8' secara stabil
-                // tanpa menggunakan fitur Prerelease.
                 callback.invoke(
                     ExtractorLink(
                         source = this.name,
