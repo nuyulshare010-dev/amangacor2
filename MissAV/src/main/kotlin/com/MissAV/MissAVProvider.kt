@@ -3,14 +3,14 @@ package com.MissAV
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.getAndUnpack // Digunakan untuk membongkar JavaScript terenkripsi
+import com.lagradost.cloudstream3.utils.getAndUnpack //
 import org.jsoup.nodes.Element
 
 class MissAVProvider : MainAPI() {
     override var mainUrl = "https://missav.ws"
     override var name = "MissAV"
     override val hasMainPage = true
-    override var lang = "id" // Bahasa default penyedia
+    override var lang = "id" //
     override val supportedTypes = setOf(TvType.NSFW)
 
     override val mainPage = mainPageOf(
@@ -94,13 +94,13 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // --- FUNGSI SUBTITLE (MENARIK SEMUA VERSI INDONESIA) ---
+    // --- LOGIKA SUBTITLE: MENARIK SEMUA VERSI INDONESIA ---
     private suspend fun fetchSubtitleCat(code: String, subtitleCallback: (SubtitleFile) -> Unit) {
         try {
             val searchUrl = "https://www.subtitlecat.com/index.php?search=$code"
             val searchDoc = app.get(searchUrl).document
             
-            // Ambil semua hasil pencarian yang relevan dengan kode film
+            // Mencari link detail yang mengandung kode film agar lebih akurat
             val searchResults = searchDoc.select("table.sub-table tbody tr td:nth-child(1) > a")
             val targetResult = searchResults.find { it.text().contains(code, ignoreCase = true) } ?: searchResults.firstOrNull()
 
@@ -112,34 +112,38 @@ class MissAVProvider : MainAPI() {
                 }
 
                 val detailDoc = app.get(detailPath).document
-                
-                // Ambil semua item dari halaman detail
                 val subItems = detailDoc.select("div.sub-single")
-                var count = 1
+                
+                var idIndex = 1 // Penomoran untuk versi Indonesia
 
                 subItems.forEach { item ->
                     val langText = item.select("span").getOrNull(1)?.text()?.trim() ?: ""
-                    val downloadEl = item.selectFirst("a.green-link")
+                    val downloadEl = item.selectFirst("a.green-link") // Ambil hanya tombol hijau
                     val downloadHref = downloadEl?.attr("href")
 
-                    if (downloadHref != null) {
-                        // LOGIKA BARU: Jika mengandung kata "Indonesian", ambil semuanya
-                        if (langText.contains("Indonesian", ignoreCase = true)) {
-                            val finalUrl = if (downloadHref.startsWith("http")) {
-                                downloadHref
-                            } else {
-                                "https://www.subtitlecat.com$downloadHref"
-                            }
-                            
-                            // Memberikan label unik agar kamu bisa memilih versi yang berbeda di player
-                            subtitleCallback.invoke(
-                                SubtitleFile(
-                                    lang = "Indonesian v$count",
-                                    url = finalUrl
-                                )
-                            )
-                            count++
+                    if (downloadHref != null && langText.contains("Indonesian", ignoreCase = true)) {
+                        // Analisis tambahan: Cek apakah ada info "translated from ..." di dalam element
+                        val fullInfo = item.text()
+                        val sourceInfo = if (fullInfo.contains("translated from", ignoreCase = true)) {
+                            " (Auto-TR)" // Tandai jika terdeteksi hasil translate otomatis
+                        } else {
+                            ""
                         }
+
+                        val finalUrl = if (downloadHref.startsWith("http")) {
+                            downloadHref
+                        } else {
+                            "https://www.subtitlecat.com$downloadHref"
+                        }
+                        
+                        // Kirim setiap versi Indonesia ke menu subtitel
+                        subtitleCallback.invoke(
+                            SubtitleFile(
+                                lang = "Indonesian [$idIndex]$sourceInfo",
+                                url = finalUrl
+                            )
+                        )
+                        idIndex++
                     }
                 }
             }
@@ -148,7 +152,7 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    @Suppress("DEPRECATION_ERROR") // Mengizinkan penggunaan constructor ExtractorLink yang stabil
+    @Suppress("DEPRECATION_ERROR") //
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -156,9 +160,9 @@ class MissAVProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         
-        // A. Proses Video
+        // 1. Ekstraksi Video
         var text = app.get(data).text
-        text = getAndUnpack(text) // Membuka Packed JS untuk link video
+        text = getAndUnpack(text) //
 
         val m3u8Regex = Regex("""(https?:\\?\/\\?\/[^"']+\.m3u8)""")
         val matches = m3u8Regex.findAll(text)
@@ -178,6 +182,7 @@ class MissAVProvider : MainAPI() {
 
                 val sourceName = if (fixedUrl.contains("surrit")) "Surrit (HD)" else "MissAV (Backup)"
 
+                // Menggunakan constructor lama yang stabil
                 callback.invoke(
                     ExtractorLink(
                         source = this.name,
@@ -190,13 +195,13 @@ class MissAVProvider : MainAPI() {
                 )
             }
 
-            // B. Proses Subtitle (Semua versi Indonesia)
+            // 2. Ambil Semua Subtitle Indonesia
             val codeRegex = Regex("""([a-zA-Z]{2,5}-\d{3,5})""")
             val codeMatch = codeRegex.find(data)
             val code = codeMatch?.value
             
             if (code != null) {
-                // Mencari dan mengirim semua subtitle Indonesia yang tersedia ke callback
+                // Memanggil fungsi pencarian subtitel secara sequential agar aman dari crash
                 fetchSubtitleCat(code, subtitleCallback)
             }
 
