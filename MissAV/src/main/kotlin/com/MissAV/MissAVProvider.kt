@@ -71,11 +71,10 @@ class MissAVProvider : MainAPI() {
         }
     }
 
-    // --- FUNGSI LOAD (DETAIL VIDEO + REKOMENDASI CERDAS) ---
+    // --- FUNGSI LOAD (DETAIL VIDEO + REKOMENDASI MAX 20 ITEM) ---
     override suspend fun load(url: String): LoadResponse? {
         val document = app.get(url).document
         
-        // Ambil Data Utama
         val title = document.selectFirst("h1.text-base")?.text()?.trim() ?: "Unknown Title"
         val poster = document.selectFirst("meta[property='og:image']")?.attr("content")
             ?: document.selectFirst("video.player")?.attr("poster")
@@ -83,15 +82,13 @@ class MissAVProvider : MainAPI() {
             .maxByOrNull { it.text().length }?.text()?.trim()
             ?: document.selectFirst("meta[property='og:description']")?.attr("content")
 
-        // === FITUR SARAN FILM CERDAS ===
-        // Mengambil rekomendasi dari halaman Aktris/Genre agar gambar valid
+        // === FITUR SARAN FILM (TARGET 20 ITEM) ===
         val recommendations = ArrayList<SearchResponse>()
         
         try {
-            // 1. Coba cari Link Aktris dulu (Prioritas Utama)
+            // 1. Tentukan sumber saran (Prioritas: Aktris -> Pembuat -> Genre)
             var recUrl = document.selectFirst("div.text-secondary a[href*='/actresses/']")?.attr("href")
             
-            // 2. Kalau tidak ada Aktris, cari Link Genre atau Pembuat
             if (recUrl == null) {
                 recUrl = document.selectFirst("div.text-secondary a[href*='/makers/']")?.attr("href")
             }
@@ -99,31 +96,47 @@ class MissAVProvider : MainAPI() {
                 recUrl = document.selectFirst("div.text-secondary a[href*='/genres/']")?.attr("href")
             }
 
-            // 3. Jika ketemu link referensi, buka halamannya dan ambil daftar videonya
             if (recUrl != null) {
-                val fixedRecUrl = fixUrl(recUrl)
-                val recDoc = app.get(fixedRecUrl).document
+                val baseUrl = fixUrl(recUrl)
+                var page = 1
                 
-                recDoc.select("div.thumbnail").forEach { element ->
-                    val linkElement = element.selectFirst("a.text-secondary") ?: return@forEach
-                    val href = linkElement.attr("href")
-                    val fixedVideoUrl = fixUrl(href)
+                // LOOPING: Ambil halaman 1 (dapat 16 film), kalau kurang dari 20, ambil halaman 2.
+                while (recommendations.size < 20 && page <= 3) {
+                    
+                    val targetUrl = if (page > 1) "$baseUrl?page=$page" else baseUrl
+                    val recDoc = app.get(targetUrl).document
+                    val items = recDoc.select("div.thumbnail")
+                    
+                    if (items.isEmpty()) break // Berhenti jika halaman kosong
 
-                    // Jangan masukkan video yang sedang ditonton ke daftar saran
-                    if (fixedVideoUrl != url) {
-                        val recTitle = linkElement.text().trim()
-                        val img = element.selectFirst("img")
-                        val recPoster = img?.attr("data-src") ?: img?.attr("src")
+                    for (element in items) {
+                        // Stop jika sudah dapat 20 item pas
+                        if (recommendations.size >= 20) break
 
-                        // Pastikan poster ada agar tidak muncul kotak abu-abu
-                        if (!recPoster.isNullOrEmpty()) {
-                            recommendations.add(
-                                newMovieSearchResponse(recTitle, fixedVideoUrl, TvType.NSFW) {
-                                    this.posterUrl = recPoster
+                        val linkElement = element.selectFirst("a.text-secondary") ?: continue
+                        val href = linkElement.attr("href")
+                        val fixedVideoUrl = fixUrl(href)
+
+                        // Jangan masukkan video yang sedang ditonton
+                        if (fixedVideoUrl != url) {
+                            val recTitle = linkElement.text().trim()
+                            val img = element.selectFirst("img")
+                            val recPoster = img?.attr("data-src") ?: img?.attr("src")
+
+                            if (!recPoster.isNullOrEmpty()) {
+                                // Cek agar tidak ada duplikat di list rekomendasi
+                                val isDuplicate = recommendations.any { it.url == fixedVideoUrl }
+                                if (!isDuplicate) {
+                                    recommendations.add(
+                                        newMovieSearchResponse(recTitle, fixedVideoUrl, TvType.NSFW) {
+                                            this.posterUrl = recPoster
+                                        }
+                                    )
                                 }
-                            )
+                            }
                         }
                     }
+                    page++ // Lanjut ke halaman berikutnya
                 }
             }
         } catch (e: Exception) {
@@ -174,7 +187,7 @@ class MissAVProvider : MainAPI() {
                                 
                                 subtitleCallback.invoke(
                                     SubtitleFile(
-                                        lang = rawLang, // Biarkan nama asli agar player melakukan grouping
+                                        lang = rawLang, // Biarkan nama asli agar player melakukan grouping (1, 2, 3)
                                         url = finalUrl
                                     )
                                 )
