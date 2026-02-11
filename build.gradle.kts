@@ -8,19 +8,18 @@ buildscript {
     repositories {
         google()
         mavenCentral()
-        // JitPack wajib ada di sini buat narik plugin recloudstream
-        maven("https://jitpack.io") 
+        // JitPack wajib ada di sini
+        maven("https://jitpack.io")
     }
 
     dependencies {
-        // GANTI KE VERSI STABIL (Standard CloudStream)
-        classpath("com.android.tools.build:gradle:8.2.2") 
+        // Plugin Android Stabil
+        classpath("com.android.tools.build:gradle:8.2.2")
         
-        // KUNCI: Pakai Commit Hash spesifik, JANGAN master-SNAPSHOT
-        // Hash 'e116639' adalah versi stabil plugin Cloudstream
-        classpath("com.github.recloudstream:gradle:e116639")
+        // KITA BALIK KE MASTER-SNAPSHOT (Sekarang aman karena Gradle udah v8.6)
+        classpath("com.github.recloudstream:gradle:master-SNAPSHOT")
         
-        // Pakai Kotlin 1.9.x agar kompatibel dengan CloudStream core
+        // Kotlin Stabil
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22")
     }
 }
@@ -43,6 +42,7 @@ subprojects {
     apply(plugin = "com.lagradost.cloudstream3.gradle")
 
     cloudstream {
+        // Ganti URL ini dengan URL repo GitHub kamu sendiri kalau mau
         setRepo(System.getenv("GITHUB_REPOSITORY") ?: "https://github.com/phisher98/cloudstream-extensions-phisher")
         authors = listOf("Phisher98")
     }
@@ -52,7 +52,7 @@ subprojects {
 
         defaultConfig {
             minSdk = 21
-            compileSdkVersion(34) // 35 boleh, tapi 34 lebih aman
+            compileSdkVersion(34) // Kita pake 34 aja biar stabil
             targetSdk = 34
         }
 
@@ -77,22 +77,19 @@ subprojects {
         val implementation by configurations
         val cloudstream by configurations
         
-        // Dependency Wajib
+        // CloudStream Core Stabil
         cloudstream("com.lagradost:cloudstream3:pre-release") 
 
         // Standard libs
         implementation(kotlin("stdlib"))
-        implementation("com.github.Blatzar:NiceHttp:0.4.11") // Versi stabil
-        implementation("org.jsoup:jsoup:1.17.2") // Versi stabil
+        implementation("com.github.Blatzar:NiceHttp:0.4.11")
+        implementation("org.jsoup:jsoup:1.17.2")
         
-        // Serialization & JSON
         implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.16.1")
         implementation("com.google.code.gson:gson:2.10.1")
         
-        // Coroutines
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
         
-        // Tools tambahan
         implementation("org.mozilla:rhino:1.7.14") 
         implementation("me.xdrop:fuzzywuzzy:1.4.0")
     }
