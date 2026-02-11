@@ -2,247 +2,88 @@ package com.JavHey
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
-import com.lagradost.cloudstream3.utils.M3u8Helper.Companion.generateM3u8
-import com.lagradost.cloudstream3.network.WebViewResolver
-import org.jsoup.nodes.Document
-import java.net.URI
-import java.util.Base64
-import kotlinx.coroutines.*
+import org.jsoup.nodes.Element
 
-/**
- * MANAGER V6 (COLLECT ALL - ANTI IDIOT)
- * - Tidak ada stopwatch/timeout manual yang mematikan proses sepihak.
- * - Menunggu SEMUA server selesai bekerja.
- * - Link muncul satu per satu (Realtime) begitu didapatkan.
- */
-object JavHeyExtractorManager {
+class JavHey : MainAPI() {
+    override var mainUrl = "https://javhey.com"
+    override var name = "JavHey"
+    override val hasMainPage = true
+    override var lang = "id"
+    override val supportedTypes = setOf(TvType.NSFW)
 
-    suspend fun invoke(
-        html: String,
+    private val headers = mapOf(
+        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Referer" to "$mainUrl/",
+        "Connection" to "keep-alive"
+    )
+
+    override val mainPage = mainPageOf(
+        "$mainUrl/videos/paling-dilihat/page=" to "Paling Dilihat",
+        "$mainUrl/videos/top-rating/page=" to "Top Rating",
+        "$mainUrl/category/12/cuckold-or-ntr/page=" to "CUCKOLD OR NTR VIDEOS",
+        "$mainUrl/category/31/decensored/page=" to "DECENSORED VIDEOS",
+        "$mainUrl/category/21/drama/page=" to "Drama",
+        "$mainUrl/category/114/female-investigator/page=" to "Investigasi",
+        "$mainUrl/category/9/housewife/page=" to "HOUSEWIFE",
+        "$mainUrl/category/227/hubungan-sedarah/page=" to "Inces",
+        "$mainUrl/category/87/hot-spring/page=" to "Air Panas"
+    )
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val url = request.data + page
+        val document = app.get(url, headers = headers, timeout = 30).document
+        val home = document.select("article.item").mapNotNull { it.toSearchResult() }
+        return newHomePageResponse(request.name, home)
+    }
+
+    private fun Element.toSearchResult(): SearchResponse? {
+        val titleElement = this.selectFirst("div.item_content h3 a") ?: return null
+        val title = titleElement.text().trim()
+        val href = fixUrl(titleElement.attr("href"))
+        
+        // Ambil gambar langsung apa adanya
+        val imgTag = this.selectFirst("div.item_header img")
+        val posterUrl = imgTag?.attr("data-src")?.takeIf { it.isNotEmpty() } 
+            ?: imgTag?.attr("src")
+
+        return newMovieSearchResponse(title, href, TvType.NSFW) { this.posterUrl = posterUrl }
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val url = "$mainUrl/search?s=$query"
+        val document = app.get(url, headers = headers, timeout = 30).document
+        return document.select("article.item").mapNotNull { it.toSearchResult() }
+    }
+
+    override suspend fun load(url: String): LoadResponse {
+        val response = app.get(url, headers = headers, timeout = 30)
+        val document = response.document
+        val finalUrl = response.url 
+        
+        val title = document.selectFirst("h1.product_title")?.text()?.trim() ?: "No Title"
+        val description = document.select("p.video-description").text().replace("Description: ", "", ignoreCase = true).trim()
+        
+        val imgTag = document.selectFirst("div.images img")
+        val poster = imgTag?.attr("data-src")?.takeIf { it.isNotEmpty() } 
+            ?: imgTag?.attr("src")
+        
+        return newMovieLoadResponse(title, finalUrl, TvType.NSFW, finalUrl) {
+            this.posterUrl = poster
+            this.plot = description
+        }
+    }
+
+    override suspend fun loadLinks(
+        data: String,
+        isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
-    ) {
-        val rawUrls = mutableSetOf<String>()
-
-        // 1. Ambil Link Tersembunyi
-        try {
-            val regexBase64 = Regex("""id="links"\s+value="([^"]+)"""")
-            regexBase64.find(html)?.groupValues?.get(1)?.let { encrypted ->
-                if (encrypted.isNotEmpty()) {
-                    val decoded = String(Base64.getDecoder().decode(encrypted))
-                    decoded.split(",,,").forEach { url ->
-                        val clean = url.trim()
-                        if (isValidLink(clean)) rawUrls.add(clean)
-                    }
-                }
-            }
-        } catch (e: Exception) { e.printStackTrace() }
-
-        // 2. Ambil Link Tombol
-        try {
-            val regexLink = Regex("""href="(https?://[^"]+)"""")
-            regexLink.findAll(html).forEach { match ->
-                val href = match.groupValues[1].trim()
-                if (isValidLink(href) && !rawUrls.contains(href)) {
-                    rawUrls.add(href)
-                }
-            }
-        } catch (e: Exception) { e.printStackTrace() }
-
-        // 3. EKSEKUSI PARALEL "KUMPULKAN SEMUA"
-        // coroutineScope = Menunggu semua anak selesai. Tidak ada yang ditinggal.
-        coroutineScope {
-            rawUrls.forEach { url ->
-                launch(Dispatchers.IO) {
-                    try {
-                        // Kita tidak pasang 'withTimeout' di sini.
-                        // Kita percayakan pada timeout bawaan CloudStream (biasanya 60s).
-                        // Jadi server lambat tapi bagus TETAP AKAN DITUNGGU sampai dia lapor.
-                        loadExtractor(url, subtitleCallback, callback)
-                    } catch (e: Exception) {
-                        // Jika satu error, biarkan saja, jangan ganggu yang lain
-                        e.printStackTrace()
-                    }
-                }
-            }
-        }
-        // Fungsi ini baru akan selesai setelah SEMUA link dicoba.
-    }
-
-    private fun isValidLink(url: String): Boolean {
-        if (!url.startsWith("http")) return false
-        val u = url.lowercase()
-        // Filter: Hanya proses server yang kita kenal agar tidak buang waktu
-        return (u.contains("vidhide") || u.contains("filelions") || u.contains("kinoger") ||
-                u.contains("mixdrop") || u.contains("streamwish") || u.contains("mwish") ||
-                u.contains("wishembed") || u.contains("dood") || u.contains("ds2play") ||
-                u.contains("lulustream") || u.contains("swdyu") || u.contains("earn")) &&
-               !u.contains("emturbovid") && 
-               !u.contains("bestx")
-    }
-}
-
-// ============================================================================
-//  SECTION: CUSTOM EXTRACTORS
-// ============================================================================
-
-// --- FAMILY: VIDHIDE / FILELIONS ---
-class VidHidePro1 : VidHidePro() { override var mainUrl = "https://filelions.live" }
-class VidHidePro2 : VidHidePro() { override var mainUrl = "https://filelions.online" }
-class VidHidePro3 : VidHidePro() { override var mainUrl = "https://filelions.to" }
-class VidHidePro4 : VidHidePro() { override val mainUrl = "https://kinoger.be" }
-class VidHidePro5 : VidHidePro() { override val mainUrl = "https://vidhidevip.com" }
-class VidHidePro6 : VidHidePro() { override val mainUrl = "https://vidhidepre.com" }
-class Smoothpre : VidHidePro() { override var name = "EarnVids"; override var mainUrl = "https://smoothpre.com" }
-class Dhtpre : VidHidePro() { override var name = "EarnVids"; override var mainUrl = "https://dhtpre.com" }
-class Peytonepre : VidHidePro() { override var name = "EarnVids"; override var mainUrl = "https://peytonepre.com" }
-
-open class VidHidePro : ExtractorApi() {
-    override val name = "VidHidePro"
-    override val mainUrl = "https://vidhidepro.com"
-    override val requiresReferer = true
-
-    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
-        val headers = mapOf("Origin" to mainUrl, "User-Agent" to USER_AGENT)
-        val response = app.get(getEmbedUrl(url), referer = referer)
-        val text = response.text
-        val script = if (text.contains("eval(function")) getAndUnpack(text) else text
-        
-        Regex(":\\s*\"(.*?m3u8.*?)\"").findAll(script).forEach { m3u8Match ->
-            val hlsUrl = fixUrl(m3u8Match.groupValues[1])
-            generateM3u8(name, hlsUrl, referer = "$mainUrl/", headers = headers).forEach(callback)
-        }
-    }
-    private fun getEmbedUrl(url: String): String {
-        return url.replace(Regex("/(d|download|file)/"), "/v/").replace("/f/", "/v/")
-    }
-}
-
-// --- FAMILY: MIXDROP ---
-class MixDropBz : MixDrop(){ override var mainUrl = "https://mixdrop.bz" }
-class MixDropAg : MixDrop(){ override var mainUrl = "https://mixdrop.ag" }
-class MixDropCh : MixDrop(){ override var mainUrl = "https://mixdrop.ch" }
-class MixDropTo : MixDrop(){ override var mainUrl = "https://mixdrop.to" }
-
-open class MixDrop : ExtractorApi() {
-    override var name = "MixDrop"
-    override var mainUrl = "https://mixdrop.co"
-    private val srcRegex = Regex("""wurl.*?=.*?"(.*?)";""")
-    override val requiresReferer = false
-    override fun getExtractorUrl(id: String): String = "$mainUrl/e/$id"
-    
-    override suspend fun getUrl(url: String, referer: String?): List<ExtractorLink>? {
-        val embed = url.replaceFirst("/f/", "/e/")
-        val unpacked = getAndUnpack(app.get(embed).text)
-        srcRegex.find(unpacked)?.groupValues?.get(1)?.let { link ->
-            return listOf(newExtractorLink(name, name, httpsify(link)) {
-                this.referer = url
-                this.quality = Qualities.Unknown.value 
-            })
-        }
-        return null
-    }
-}
-
-// --- FAMILY: STREAMWISH ---
-class Mwish : StreamWishExtractor() { override val name = "Mwish"; override val mainUrl = "https://mwish.pro" }
-class Dwish : StreamWishExtractor() { override val name = "Dwish"; override val mainUrl = "https://dwish.pro" }
-class Streamwish2 : StreamWishExtractor() { override val mainUrl = "https://streamwish.site" }
-class WishembedPro : StreamWishExtractor() { override val name = "Wishembed"; override val mainUrl = "https://wishembed.pro" }
-class Wishfast : StreamWishExtractor() { override val name = "Wishfast"; override val mainUrl = "https://wishfast.top" }
-class Swdyu : StreamWishExtractor() { override val name = "Swdyu"; override val mainUrl = "https://swdyu.com" }
-
-open class StreamWishExtractor : ExtractorApi() {
-    override val name = "Streamwish"
-    override val mainUrl = "https://streamwish.to"
-    override val requiresReferer = true
-
-    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
-        val headers = mapOf("Origin" to "$mainUrl/", "User-Agent" to USER_AGENT)
-        val text = app.get(resolveEmbedUrl(url), referer = referer).text
-        val script = if (text.contains("eval(function")) getAndUnpack(text) else text
-        
-        val file = Regex("""file:\s*"(.*?m3u8.*?)"""").find(script)?.groupValues?.getOrNull(1)
-
-        if (!file.isNullOrEmpty()) {
-            generateM3u8(name, file, mainUrl, headers = headers).forEach(callback)
-        } else {
-            val resolver = WebViewResolver(
-                interceptUrl = Regex("""txt|m3u8"""), 
-                additionalUrls = listOf(Regex("""txt|m3u8""")), 
-                useOkhttp = false, 
-                timeout = 10_000L
-            )
-            val resUrl = app.get(url, referer = referer, interceptor = resolver).url
-            if (resUrl.isNotEmpty()) {
-                generateM3u8(name, resUrl, mainUrl, headers = headers).forEach(callback)
-            }
-        }
-    }
-    private fun resolveEmbedUrl(inputUrl: String): String {
-        return inputUrl.replace(Regex("/(f|e)/"), "/e/").let { if(!it.contains(mainUrl)) "$mainUrl/${it.substringAfterLast("/")}" else it }
-    }
-}
-
-// --- FAMILY: DOODSTREAM ---
-class D0000d : DoodLaExtractor() { override var mainUrl = "https://d0000d.com" }
-class DoodstreamCom : DoodLaExtractor() { override var mainUrl = "https://doodstream.com" }
-class Dooood : DoodLaExtractor() { override var mainUrl = "https://dooood.com" }
-class DoodWfExtractor : DoodLaExtractor() { override var mainUrl = "https://dood.wf" }
-class DoodCxExtractor : DoodLaExtractor() { override var mainUrl = "https://dood.cx" }
-class DoodShExtractor : DoodLaExtractor() { override var mainUrl = "https://dood.sh" }
-class DoodWatchExtractor : DoodLaExtractor() { override var mainUrl = "https://dood.watch" }
-class DoodPmExtractor : DoodLaExtractor() { override var mainUrl = "https://dood.pm" }
-class DoodToExtractor : DoodLaExtractor() { override var mainUrl = "https://dood.to" }
-class DoodSoExtractor : DoodLaExtractor() { override var mainUrl = "https://dood.so" }
-class DoodWsExtractor : DoodLaExtractor() { override var mainUrl = "https://dood.ws" }
-class DoodYtExtractor : DoodLaExtractor() { override var mainUrl = "https://dood.yt" }
-class DoodLiExtractor : DoodLaExtractor() { override var mainUrl = "https://dood.li" }
-class Ds2play : DoodLaExtractor() { override var mainUrl = "https://ds2play.com" }
-class Ds2video : DoodLaExtractor() { override var mainUrl = "https://ds2video.com" }
-class MyVidPlay : DoodLaExtractor() { override var mainUrl = "https://myvidplay.com" }
-
-open class DoodLaExtractor : ExtractorApi() {
-    override var name = "DoodStream"
-    override var mainUrl = "https://dood.la"
-    override val requiresReferer = false
-    private val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-
-    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
-        val embedUrl = url.replace("/d/", "/e/")
-        val req = app.get(embedUrl)
-        
-        val host = URI(req.url).let { "${it.scheme}://${it.host}" }
-        
-        val md5 = Regex("/pass_md5/[^']*").find(req.text)?.value ?: return
-        val token = md5.substringAfterLast("/")
-        val trueUrl = app.get(host + md5, referer = req.url).text + buildString { repeat(10) { append(alphabet.random()) } } + "?token=" + token
-        
-        callback.invoke(newExtractorLink(name, name, trueUrl) { 
-            this.referer = "$mainUrl/"
-            this.quality = Qualities.Unknown.value 
-        })
-    }
-}
-
-// --- FAMILY: LULUSTREAM ---
-class Lulustream1 : LuluStream() { override val name = "Lulustream"; override val mainUrl = "https://lulustream.com" }
-class Lulustream2 : LuluStream() { override val name = "Lulustream"; override val mainUrl = "https://kinoger.pw" }
-
-open class LuluStream : ExtractorApi() {
-    override val name = "LuluStream"
-    override val mainUrl = "https://luluvdo.com"
-    override val requiresReferer = true
-    override suspend fun getUrl(url: String, referer: String?, subtitleCallback: (SubtitleFile) -> Unit, callback: (ExtractorLink) -> Unit) {
-        val post = app.post("$mainUrl/dl", data = mapOf("op" to "embed", "file_code" to url.substringAfterLast("/"), "auto" to "1", "referer" to (referer ?: ""))).document
-        post.selectFirst("script:containsData(vplayer)")?.data()?.let { script ->
-            Regex("file:\"(.*)\"").find(script)?.groupValues?.get(1)?.let { link ->
-                callback(newExtractorLink(name, name, link) { 
-                    this.referer = mainUrl
-                    this.quality = Qualities.Unknown.value 
-                })
-            }
-        }
+    ): Boolean {
+        // --- KUNCI V7: Ambil .text (String Mentah) ---
+        // JavHeyExtractorManager V7 butuh String untuk Regex, bukan Document.
+        val htmlText = app.get(data, headers = headers, timeout = 30).text
+        JavHeyExtractorManager.invoke(htmlText, subtitleCallback, callback)
+        return true
     }
 }
