@@ -17,20 +17,52 @@ class LayarKacaProvider : MainAPI() {
     override var lang = "id"
     override val supportedTypes = setOf(TvType.Movie, TvType.TvSeries)
 
+    // --- DAFTAR SEMUA KATEGORI (29 GENRE) ---
+    // Disimpan lengkap agar bisa digunakan untuk pengembangan fitur Filter nanti.
+    private val genres = listOf(
+        "Action", "Adventure", "Animation", "Biography", "Comedy", "Crime",
+        "Documentary", "Drama", "Family", "Fantasy", "Film-Noir", "Game-Show",
+        "History", "Horror", "Musical", "Mystery", "Psychological", "Reality-TV",
+        "Romance", "Sci-Fi", "Short", "Sport", "Supernatural", "TV Movie",
+        "Talk-Show", "Thriller", "War", "Western", "Wrestling"
+    )
+
     // --- MAIN PAGE ---
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val document = app.get(mainUrl).document
         val items = ArrayList<HomePageList>()
 
+        // Fungsi bantu untuk menambahkan widget jika elemen ditemukan
         fun addWidget(title: String, selector: String) {
             val list = document.select(selector).mapNotNull { toSearchResult(it) }
             if (list.isNotEmpty()) items.add(HomePageList(title, list))
         }
 
-        addWidget("Film Terbaru", "div.widget[data-type='latest-movies'] li.slider article")
-        addWidget("Series Unggulan", "div.widget[data-type='top-series-today'] li.slider article")
-        addWidget("Horror Terbaru", "div.widget[data-type='latest-horror'] li.slider article")
-        addWidget("Daftar Lengkap", "div#post-container article")
+        // 1. Widget Utama (Film & Series)
+        addWidget("Film Terbaru", "div.widget[data-type='latest-movies'] li.slider article") //
+        addWidget("Series Unggulan", "div.widget[data-type='top-series-today'] li.slider article") //
+        addWidget("Series Update", "div.widget[data-type='latest-series'] li.slider article") //
+
+        // 2. Widget Berdasarkan Genre Spesifik
+        addWidget("Action Terbaru", "div.widget[data-type='latest-action'] li.slider article") //
+        addWidget("Horror Terbaru", "div.widget[data-type='latest-horror'] li.slider article") //
+        addWidget("Comedy Terbaru", "div.widget[data-type='latest-comedy'] li.slider article") //
+        addWidget("Romance Terbaru", "div.widget[data-type='latest-romance'] li.slider article") //
+
+        // 3. Widget Spesial (Negara & Koleksi)
+        addWidget("Maraton Drakor", "div.widget:has(h2:contains(Maraton Drakor)) li.slider article") //
+        addWidget("Korea Terbaru", "div.widget[data-type='latest-korea'] li.slider article") //
+        addWidget("Thailand Terbaru", "div.widget[data-type='latest-thailand'] li.slider article") //
+        addWidget("India Terbaru", "div.widget[data-type='latest-india'] li.slider article") //
+
+        // 4. Widget Rekomendasi & Lainnya (Menggunakan Text Selector karena data-type kosong)
+        addWidget("Top Bulan Ini", "div.widget:has(h2:contains(TOP BULAN INI)) li.slider article") //
+        addWidget("Rekomendasi Untukmu", "div.widget:has(h2:contains(Rekomendasi Untukmu)) li.slider article") //
+        addWidget("Nonton Bareng Keluarga", "div.widget:has(h2:contains(Nonton Bareng Keluarga)) li.slider article") //
+        addWidget("You May Also Like", "div.widget:has(h2:contains(You May Also Like)) li.slider article") //
+
+        // 5. Daftar Lengkap (Infinite Scroll Container di paling bawah)
+        addWidget("Daftar Lengkap", "div#post-container article") //
 
         return newHomePageResponse(items)
     }
@@ -77,6 +109,7 @@ class LayarKacaProvider : MainAPI() {
         }
     }
 
+    // Helper untuk mengubah elemen HTML menjadi SearchResponse
     private fun toSearchResult(element: Element): SearchResponse? {
         val title = element.select("h3.poster-title, h2.entry-title, h1.page-title, div.title").text().trim()
         if (title.isEmpty()) return null
@@ -84,6 +117,8 @@ class LayarKacaProvider : MainAPI() {
         val imgElement = element.select("img").first()
         val posterUrl = imgElement?.attr("src") ?: imgElement?.attr("data-src")
         val quality = getQualityFromString(element.select("span.label").text())
+        
+        // Deteksi apakah series berdasarkan jumlah episode atau durasi "S.1"
         val isSeries = element.select("span.episode").isNotEmpty() || element.select("span.duration").text().contains("S.")
 
         return if (isSeries) {
@@ -107,6 +142,7 @@ class LayarKacaProvider : MainAPI() {
         var response = app.get(cleanUrl)
         var document = response.document
 
+        // Cek tombol redirect (Buka Sekarang / Nontondrama)
         val redirectButton = document.select("a:contains(Buka Sekarang), a.btn:contains(Nontondrama)").first()
         if (redirectButton != null) {
             val newUrl = redirectButton.attr("href")
@@ -130,6 +166,7 @@ class LayarKacaProvider : MainAPI() {
         val episodes = ArrayList<Episode>()
         val jsonScript = document.select("script#season-data").html()
 
+        // Parsing Episode (Json Script atau Manual List)
         if (jsonScript.isNotBlank()) {
             tryParseJson<Map<String, List<NontonDramaEpisode>>>(jsonScript)?.forEach { (_, epsList) ->
                 epsList.forEach { epData ->
@@ -173,6 +210,7 @@ class LayarKacaProvider : MainAPI() {
         var currentUrl = data
         var document = app.get(currentUrl).document
 
+        // Cek Redirect sebelum load player
         val redirectButton = document.select("a:contains(Buka Sekarang), a.btn:contains(Nontondrama)").first()
         if (redirectButton != null && redirectButton.attr("href").isNotEmpty()) {
             currentUrl = fixUrl(redirectButton.attr("href"))
@@ -196,13 +234,12 @@ class LayarKacaProvider : MainAPI() {
                         loadExtractor(fixUrl(it.attr("src")), wrapperUrl, subtitleCallback, callback) 
                     }
                     
-                    // Manual Unwrap (Kalau Extractor di atas gagal)
+                    // Manual Unwrap (Regex untuk m3u8/mp4 di dalam script)
                     val scriptHtml = iframePage.html().replace("\\/", "/")
                     Regex("(?i)https?://[^\"]+\\.(m3u8|mp4)(?:\\?[^\"']*)?").findAll(scriptHtml).forEach { match ->
                         val streamUrl = match.value
                         val isM3u8 = streamUrl.contains("m3u8", ignoreCase = true)
                         
-                        // Origin dynamic sesuai wrapper
                         val originUrl = try { URI(wrapperUrl).let { "${it.scheme}://${it.host}" } } catch(e:Exception) { "https://playeriframe.sbs" }
                         
                         val headers = mapOf(
