@@ -5,22 +5,32 @@ buildscript {
     repositories {
         google()
         mavenCentral()
+        // Wajib ada di sini agar plugin Cloudstream ditemukan saat inisialisasi
         maven { url = uri("https://jitpack.io") }
     }
     dependencies {
-        // Menggunakan commit hash spesifik agar build stabil
-        classpath("com.github.recloudstream:gradle:cc41b8d84d")
+        // Menggunakan master-SNAPSHOT karena commit hash spesifik sebelumnya gagal di-resolve oleh JitPack
+        classpath("com.github.recloudstream:gradle:master-SNAPSHOT")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.21")
     }
 }
 
+// Menerapkan plugin
 apply(plugin = "com.android.library")
 apply(plugin = "kotlin-android")
 apply(plugin = "com.lagradost.cloudstream3.gradle")
 
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
+}
+
 android {
+    // Sesuaikan compileSdk dengan yang Anda gunakan, 34 adalah standar terbaru
     compileSdk = 34
-    namespace = "com.example.yourplugin" // Sesuaikan dengan package Anda
 
     defaultConfig {
         minSdk = 21
@@ -34,17 +44,30 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    sourceSets {
+        getByName("main") {
+            java.srcDirs("src/main/java")
+            manifest.srcFile("src/main/AndroidManifest.xml")
+        }
+    }
 }
 
 dependencies {
-    // Gunakan pre-release atau master-SNAPSHOT untuk library
-    val cloudstreamVersion = "master-SNAPSHOT" 
+    // Library utama Cloudstream untuk kompilasi plugin
+    val cloudstreamVersion = "master-SNAPSHOT"
     compileOnly("com.github.recloudstream:cloudstream:$cloudstreamVersion")
 }
 
 tasks.withType<KotlinCompile> {
     kotlinOptions {
         jvmTarget = "17"
+        // Menangani kompatibilitas interface Kotlin
         freeCompilerArgs = freeCompilerArgs + "-Xjvm-default=all"
     }
+}
+
+// Konfigurasi Cloudstream Extension
+configure<CloudstreamExtension> {
+    // Anda bisa mengosongkan ini atau mengisi metadata plugin jika diperlukan
 }
