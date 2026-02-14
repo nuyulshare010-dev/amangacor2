@@ -3,23 +3,23 @@ pluginManagement {
         google()
         mavenCentral()
         gradlePluginPortal()
-        // Sintaks Kotlin yang benar menggunakan url = uri("...")
+        // Menggunakan sintaks Kotlin DSL yang benar
         maven { url = uri("https://jitpack.io") }
     }
 }
 
 dependencyResolutionManagement {
+    // Memastikan repositori ini digunakan oleh semua modul aplikasi
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
-        // Memastikan JitPack tersedia untuk semua dependensi library
         maven { url = uri("https://jitpack.io") }
     }
 }
 
 rootProject.name = "CloudstreamPlugins"
 
-// Pastikan menyertakan semua modul plugin Anda di sini
-// Jika folder plugin Anda bernama 'app', biarkan seperti ini:
+// Pastikan folder plugin Anda terdaftar di sini
+// Jika foldernya bernama 'app', gunakan:
 include(":app")
