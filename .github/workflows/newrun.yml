@@ -1,4 +1,4 @@
-name: Build
+Build: Build (test )
 
 # https://docs.github.com/en/actions/learn-github-actions/workflow-syntax-for-github-actions#concurrency
 concurrency:
