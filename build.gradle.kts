@@ -5,32 +5,23 @@ buildscript {
     repositories {
         google()
         mavenCentral()
-        // Wajib ada di sini agar plugin Cloudstream ditemukan saat inisialisasi
         maven { url = uri("https://jitpack.io") }
     }
     dependencies {
-        // Menggunakan master-SNAPSHOT karena commit hash spesifik sebelumnya gagal di-resolve oleh JitPack
-        classpath("com.github.recloudstream:gradle:master-SNAPSHOT")
+        classpath("com.android.tools.build:gradle:8.2.2")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.21")
+        classpath("com.github.recloudstream:gradle:master-SNAPSHOT")
     }
 }
 
-// Menerapkan plugin
 apply(plugin = "com.android.library")
 apply(plugin = "kotlin-android")
 apply(plugin = "com.lagradost.cloudstream3.gradle")
 
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-        maven { url = uri("https://jitpack.io") }
-    }
-}
-
 android {
-    // Sesuaikan compileSdk dengan yang Anda gunakan, 34 adalah standar terbaru
     compileSdk = 34
+    // Namespace wajib ada di versi Gradle baru
+    namespace = "com.nuyulshare.cloudstream" 
 
     defaultConfig {
         minSdk = 21
@@ -44,17 +35,9 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
-
-    sourceSets {
-        getByName("main") {
-            java.srcDirs("src/main/java")
-            manifest.srcFile("src/main/AndroidManifest.xml")
-        }
-    }
 }
 
 dependencies {
-    // Library utama Cloudstream untuk kompilasi plugin
     val cloudstreamVersion = "master-SNAPSHOT"
     compileOnly("com.github.recloudstream:cloudstream:$cloudstreamVersion")
 }
@@ -62,12 +45,6 @@ dependencies {
 tasks.withType<KotlinCompile> {
     kotlinOptions {
         jvmTarget = "17"
-        // Menangani kompatibilitas interface Kotlin
         freeCompilerArgs = freeCompilerArgs + "-Xjvm-default=all"
     }
-}
-
-// Konfigurasi Cloudstream Extension
-configure<CloudstreamExtension> {
-    // Anda bisa mengosongkan ini atau mengisi metadata plugin jika diperlukan
 }
