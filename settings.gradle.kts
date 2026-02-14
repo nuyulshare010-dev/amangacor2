@@ -3,7 +3,7 @@ pluginManagement {
         google()
         mavenCentral()
         gradlePluginPortal()
-        maven { url 'https://jitpack.io' } // Tambahkan ini agar plugin ditemukan
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
@@ -12,9 +12,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven { url 'https://jitpack.io' } // Tambahkan ini untuk library
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
 rootProject.name = "CloudstreamPlugins"
-include ':app' // Sesuaikan dengan nama modul Anda, biasanya ':app' atau ':plugin'
+
