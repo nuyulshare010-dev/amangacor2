@@ -8,6 +8,7 @@ buildscript {
         maven { url = uri("https://jitpack.io") }
     }
     dependencies {
+        // Classpath ini wajib agar blok 'android' dikenali
         classpath("com.android.tools.build:gradle:8.2.2")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.21")
         classpath("com.github.recloudstream:gradle:master-SNAPSHOT")
@@ -20,7 +21,6 @@ apply(plugin = "com.lagradost.cloudstream3.gradle")
 
 android {
     compileSdk = 34
-    // Namespace wajib ada di versi Gradle baru
     namespace = "com.nuyulshare.cloudstream" 
 
     defaultConfig {
