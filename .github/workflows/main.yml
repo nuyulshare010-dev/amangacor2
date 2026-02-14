@@ -33,16 +33,16 @@ jobs:
           TMDB_API=${{ secrets.TMDB_API }}
           DUMP_API=${{ secrets.DUMP_API }}
           DUMP_KEY=${{ secrets.DUMP_KEY }}
-          # ... (tambahkan secrets lainnya di bawah sini jika perlu)
+          # ... (tambahkan secrets lainnya di bawah sini)
           EOF
 
       - name: Build Plugins
         run: |
           chmod +x gradlew
-          # Menjalankan build langsung dari root
+          # Menjalankan build dari root directory
           ./gradlew clean make makePluginsJson --refresh-dependencies --no-build-cache
           
-          # Membuat folder temporary untuk hasil build
+          # Folder sementara untuk hasil build
           mkdir -p ../output_builds
           find . -name "*.cs3" -exec cp {} ../output_builds/ \;
           [ -f build/plugins.json ] && cp build/plugins.json ../output_builds/ || true
@@ -51,9 +51,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p final_repo
-          cp -r ../output_builds/* final_repo/ || true
-          cd final_repo
+          mkdir -p final_push
+          cp -r ../output_builds/* final_push/ || true
+          cd final_push
           git init
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
@@ -62,4 +62,4 @@ jobs:
           git add .
           git commit -m "Build $GITHUB_SHA" || exit 0
           git push origin builds --force
-
+          
