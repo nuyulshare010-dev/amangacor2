@@ -18,24 +18,6 @@ jobs:
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
-        with:
-          path: "src"
-
-      - name: Checkout builds branch
-        uses: actions/checkout@v4
-        continue-on-error: true
-        with:
-          ref: "builds"
-          path: "builds"
-
-      - name: Create builds folder if not exists
-        run: mkdir -p builds
-
-      - name: Clean old builds
-        run: |
-          rm -f builds/*.cs3
-          rm -f builds/*.jar
-          rm -f builds/plugins.json
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -44,80 +26,34 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Access Secrets
         run: |
-          cd src
+          # Menulis secrets langsung ke root karena build.gradle ada di sini
           cat <<EOF > local.properties
           TMDB_API=${{ secrets.TMDB_API }}
           DUMP_API=${{ secrets.DUMP_API }}
           DUMP_KEY=${{ secrets.DUMP_KEY }}
-          ANICHI_API=${{ secrets.ANICHI_API }}
-          ANICHI_SERVER=${{ secrets.ANICHI_SERVER }}
-          ANICHI_ENDPOINT=${{ secrets.ANICHI_ENDPOINT }}
-          ANICHI_APP=${{ secrets.ANICHI_APP }}
-          ZSHOW_API=${{ secrets.ZSHOW_API }}
-          SFMOVIES_API=${{ secrets.SFMOVIES_API }}
-          CINEMATV_API=${{ secrets.CINEMATV_API }}
-          GHOSTX_API=${{ secrets.GHOSTX_API }}
-          SUPERSTREAM_FIRST_API=${{ secrets.SUPERSTREAM_FIRST_API }}
-          SUPERSTREAM_SECOND_API=${{ secrets.SUPERSTREAM_SECOND_API }}
-          SUPERSTREAM_THIRD_API=${{ secrets.SUPERSTREAM_THIRD_API }}
-          SUPERSTREAM_FOURTH_API=${{ secrets.SUPERSTREAM_FOURTH_API }}
-          AsianDrama_API=${{ secrets.AsianDrama_API }}
-          FanCode_API=${{ secrets.FanCode_API }}
-          Whvx_API=${{ secrets.Whvx_API }}
-          Su_sports=${{ secrets.Su_sports }}
-          PirateIPTV=${{ secrets.PirateIPTV }}
-          SonyIPTV=${{ secrets.SonyIPTV }}
-          JapanIPTV=${{ secrets.JapanIPTV }}
-          CatflixAPI=${{ secrets.CatflixAPI }}
-          ConsumetAPI=${{ secrets.ConsumetAPI }}
-          FlixHQAPI=${{ secrets.FlixHQAPI }}
-          WhvxAPI=${{ secrets.WhvxAPI }}
-          WhvxT=${{ secrets.WhvxT }}
-          SharmaflixApi=${{ secrets.SharmaflixApi }}
-          SharmaflixApikey=${{ secrets.SharmaflixApikey }}
-          HianimeAPI=${{ secrets.HianimeAPI }}
-          Vidsrccc=${{ secrets.Vidsrccc }}
-          WASMAPI=${{ secrets.WASMAPI }}
-          KissKh=${{ secrets.KissKh }}
-          KisskhSub=${{ secrets.KisskhSub }}
-          StreamPlayAPI=${{ secrets.StreamPlayAPI }}
-          PROXYAPI=${{ secrets.PROXYAPI }}
-          KAISVA=${{ secrets.KAISVA }}
-          MAL_API=${{ secrets.MAL_API }}
-          MOVIEBOX_SECRET_KEY_DEFAULT=${{ secrets.MOVIEBOX_SECRET_KEY_DEFAULT }}
-          MOVIEBOX_SECRET_KEY_ALT=${{ secrets.MOVIEBOX_SECRET_KEY_ALT }}
-          SuperToken=${{ secrets.SuperToken }}
-          KAIDEC=${{ secrets.KAIDEC }}
-          KAIENC=${{ secrets.KAIENC }}
-          KAIMEG=${{ secrets.KAIMEG }}
-          NuvioStreams=${{ secrets.NuvioStreams }}
-          YFXDEC=${{ secrets.YFXDEC }}
-          YFXENC=${{ secrets.YFXENC }}
-          VideasyDEC=${{ secrets.VideasyDEC }}
+          # ... (tambahkan secrets lainnya di bawah sini jika perlu)
           EOF
 
       - name: Build Plugins
         run: |
-          cd src
           chmod +x gradlew
-          # Menggunakan clean dan refresh-dependencies untuk memaksa Gradle mencari ke JitPack
+          # Menjalankan build langsung dari root
           ./gradlew clean make makePluginsJson --refresh-dependencies --no-build-cache
           
-          mkdir -p ../builds
-          find . -name "*.cs3" -exec cp {} ../builds/ \;
-          find . -name "*.jar" -exec cp {} ../builds/ \; || true
-          [ -f build/plugins.json ] && cp build/plugins.json ../builds/ || true
+          # Membuat folder temporary untuk hasil build
+          mkdir -p ../output_builds
+          find . -name "*.cs3" -exec cp {} ../output_builds/ \;
+          [ -f build/plugins.json ] && cp build/plugins.json ../output_builds/ || true
 
-      - name: Push builds
+      - name: Push to Builds Branch
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cd builds
+          mkdir -p final_repo
+          cp -r ../output_builds/* final_repo/ || true
+          cd final_repo
           git init
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
@@ -126,3 +62,4 @@ jobs:
           git add .
           git commit -m "Build $GITHUB_SHA" || exit 0
           git push origin builds --force
+
