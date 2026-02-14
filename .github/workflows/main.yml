@@ -23,7 +23,7 @@ jobs:
 
       - name: Checkout builds branch
         uses: actions/checkout@v4
-        continue-on-error: true # Melanjutkan jika branch belum ada
+        continue-on-error: true
         with:
           ref: "builds"
           path: "builds"
@@ -41,7 +41,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           java-version: 17
-          distribution: 'temurin' # Adopt sudah deprecated, disarankan temurin
+          distribution: 'temurin'
           cache: gradle
 
       - name: Setup Android SDK
@@ -50,22 +50,66 @@ jobs:
       - name: Access Secrets
         run: |
           cd src
-          # Menggunakan cara yang lebih efisien untuk menulis secrets
+          # Menulis secrets ke local.properties
           cat <<EOF > local.properties
           TMDB_API=${{ secrets.TMDB_API }}
           DUMP_API=${{ secrets.DUMP_API }}
           DUMP_KEY=${{ secrets.DUMP_KEY }}
-          # ... (tambahkan sisanya di sini jika perlu, atau biarkan cara lama Anda)
+          ANICHI_API=${{ secrets.ANICHI_API }}
+          ANICHI_SERVER=${{ secrets.ANICHI_SERVER }}
+          ANICHI_ENDPOINT=${{ secrets.ANICHI_ENDPOINT }}
+          ANICHI_APP=${{ secrets.ANICHI_APP }}
+          ZSHOW_API=${{ secrets.ZSHOW_API }}
+          SFMOVIES_API=${{ secrets.SFMOVIES_API }}
+          CINEMATV_API=${{ secrets.CINEMATV_API }}
+          GHOSTX_API=${{ secrets.GHOSTX_API }}
+          SUPERSTREAM_FIRST_API=${{ secrets.SUPERSTREAM_FIRST_API }}
+          SUPERSTREAM_SECOND_API=${{ secrets.SUPERSTREAM_SECOND_API }}
+          SUPERSTREAM_THIRD_API=${{ secrets.SUPERSTREAM_THIRD_API }}
+          SUPERSTREAM_FOURTH_API=${{ secrets.SUPERSTREAM_FOURTH_API }}
+          AsianDrama_API=${{ secrets.AsianDrama_API }}
+          FanCode_API=${{ secrets.FanCode_API }}
+          Whvx_API=${{ secrets.Whvx_API }}
+          Su_sports=${{ secrets.Su_sports }}
+          PirateIPTV=${{ secrets.PirateIPTV }}
+          SonyIPTV=${{ secrets.SonyIPTV }}
+          JapanIPTV=${{ secrets.JapanIPTV }}
+          CatflixAPI=${{ secrets.CatflixAPI }}
+          ConsumetAPI=${{ secrets.ConsumetAPI }}
+          FlixHQAPI=${{ secrets.FlixHQAPI }}
+          WhvxAPI=${{ secrets.WhvxAPI }}
+          WhvxT=${{ secrets.WhvxT }}
+          SharmaflixApi=${{ secrets.SharmaflixApi }}
+          SharmaflixApikey=${{ secrets.SharmaflixApikey }}
+          HianimeAPI=${{ secrets.HianimeAPI }}
+          Vidsrccc=${{ secrets.Vidsrccc }}
+          WASMAPI=${{ secrets.WASMAPI }}
+          KissKh=${{ secrets.KissKh }}
+          KisskhSub=${{ secrets.KisskhSub }}
+          StreamPlayAPI=${{ secrets.StreamPlayAPI }}
+          PROXYAPI=${{ secrets.PROXYAPI }}
+          KAISVA=${{ secrets.KAISVA }}
+          MAL_API=${{ secrets.MAL_API }}
+          MOVIEBOX_SECRET_KEY_DEFAULT=${{ secrets.MOVIEBOX_SECRET_KEY_DEFAULT }}
+          MOVIEBOX_SECRET_KEY_ALT=${{ secrets.MOVIEBOX_SECRET_KEY_ALT }}
+          SuperToken=${{ secrets.SuperToken }}
+          KAIDEC=${{ secrets.KAIDEC }}
+          KAIENC=${{ secrets.KAIENC }}
+          KAIMEG=${{ secrets.KAIMEG }}
+          NuvioStreams=${{ secrets.NuvioStreams }}
+          YFXDEC=${{ secrets.YFXDEC }}
+          YFXENC=${{ secrets.YFXENC }}
+          VideasyDEC=${{ secrets.VideasyDEC }}
           EOF
-          # Tips: Cara lama Anda juga tetap bekerja, pastikan cd src benar.
 
       - name: Build Plugins
         run: |
           cd src
           chmod +x gradlew
-          ./gradlew make makePluginsJson
+          # Menggunakan --refresh-dependencies untuk memaksa pencarian ulang ke JitPack
+          ./gradlew make makePluginsJson --refresh-dependencies --no-build-cache
           
-          # Gunakan find untuk menghindari error jika file tidak ditemukan
+          # Salin hasil build ke folder builds
           find . -name "*.cs3" -exec cp {} ../builds/ \;
           find . -name "*.jar" -exec cp {} ../builds/ \; || true
           [ -f build/plugins.json ] && cp build/plugins.json ../builds/ || true
@@ -83,4 +127,3 @@ jobs:
           git add .
           git commit -m "Build $GITHUB_SHA" || exit 0
           git push origin builds --force
-          
