@@ -8,7 +8,7 @@ buildscript {
         maven { url = uri("https://jitpack.io") }
     }
     dependencies {
-        // Menggunakan commit hash spesifik (lebih stabil daripada master-SNAPSHOT)
+        // Menggunakan commit hash spesifik agar build stabil
         classpath("com.github.recloudstream:gradle:cc41b8d84d")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.21")
     }
@@ -18,17 +18,10 @@ apply(plugin = "com.android.library")
 apply(plugin = "kotlin-android")
 apply(plugin = "com.lagradost.cloudstream3.gradle")
 
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-        maven { url = uri("https://jitpack.io") }
-    }
-}
-
 android {
     compileSdk = 34
-    
+    namespace = "com.example.yourplugin" // Sesuaikan dengan package Anda
+
     defaultConfig {
         minSdk = 21
     }
@@ -44,7 +37,7 @@ android {
 }
 
 dependencies {
-    // Menggunakan versi pre-release yang lebih pasti ditemukan oleh JitPack
+    // Gunakan pre-release atau master-SNAPSHOT untuk library
     val cloudstreamVersion = "master-SNAPSHOT" 
     compileOnly("com.github.recloudstream:cloudstream:$cloudstreamVersion")
 }
